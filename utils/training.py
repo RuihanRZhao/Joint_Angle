@@ -127,7 +127,7 @@ def train_segmentation(model, train_loader, val_loader, optimizer, scheduler, nu
                         overlay_true[mask_true==1] = [0,0,255]  # blue overlay for true mask
                         # Stack or side-by-side image
                         vis = np.hstack([overlay_true, overlay_pred])
-                        example_images.append(wandb.Image(vis, caption=f"True (left) vs Pred (right) Mask")))
+                        example_images.append(wandb.Image(vis, caption=f"True (left) vs Pred (right) Mask"))
             # Compute average metrics
             avg_iou = total_iou / (count if count>0 else 1)
             avg_acc = total_acc / (count if count>0 else 1)

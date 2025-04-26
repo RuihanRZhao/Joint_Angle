@@ -9,9 +9,11 @@ from torch.utils.data import DataLoader
 # Import the models (assuming they are in the project package)
 from models.teacher_model import TeacherModel
 from models.student_model import StudentModel
-# from models.segmentation_model import SegmentationModel  # existing teacher sub-model class
-# from models.pose_model import PoseModel                  # existing teacher sub-model class
-# from data.dataset import PoseSegDataset                  # your dataset class providing images, mask GT, keypoint GT
+from models.segmentation_model import UNetSegmentationModel  # existing teacher sub-model class
+from models.pose_model import PoseEstimationModel                  # existing teacher sub-model class
+
+
+from config import NUM_KEYPOINTS_COCO
 
 def train_distillation(teacher_seg_weights: str, teacher_pose_weights: str,
                        data_dir: str, epochs: int = 50, batch_size: int = 16,
@@ -27,7 +29,7 @@ def train_distillation(teacher_seg_weights: str, teacher_pose_weights: str,
     pose_model = ...  # (Replace with actual pose model loading)
 
     teacher_model = TeacherModel(seg_model, pose_model)
-    student_model = StudentModel(num_keypoints=pose_model.num_keypoints if hasattr(pose_model, 'num_keypoints') else <NUM_KEYPOINTS>,
+    student_model = StudentModel(num_keypoints=pose_model.num_keypoints if hasattr(pose_model, 'num_keypoints') else NUM_KEYPOINTS_COCO,
                                  seg_channels=1, pretrained_backbone=True)
     student_model.train()  # set student in training mode
 
