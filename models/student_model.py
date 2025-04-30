@@ -3,85 +3,107 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 
-class StudentModel(nn.Module):
-    """
-    Lightweight student model for joint human segmentation and pose estimation.
-    Uses MobileNetV3 as the feature extractor and small decoder heads.
-    """
-    def __init__(self, num_keypoints: int, seg_channels: int = 1, width_mult: float = 1.0, pretrained_backbone: bool = True):
-        super(StudentModel, self).__init__()
-        # Load a MobileNetV3 backbone (large) up to the final convolution layer
-        backbone_model = models.mobilenet_v3_large(weights=models.MobileNet_V3_Large_Weights.IMAGENET1K_V1 if pretrained_backbone else None)
-        self.backbone = backbone_model.features  # Sequential backbone (outputs 1280-channel feature)
-        # Identify channels at key feature points for skip connections
-        # MobileNetV3-Large feature map channels at:
-        # - 1/4 resolution (stride 4) -> 24 channels
-        # - 1/8 resolution (stride 8) -> 40 channels
-        # - 1/16 resolution (stride 16) -> 112 channels
-        # - final 1/32 resolution -> 1280 channels
-        self.skip_index_1 = 6   # index in backbone where feature is 1/8 res (approx 40 channels)
-        self.skip_index_2 = 12  # index where feature is 1/16 res (approx 112 channels)
 
-        # Convolution layers to reduce channels for skip features and backbone output
+class StudentModel(nn.Module):
+    """修改后的学生模型，支持分割结果作为姿态估计的输入"""
+
+    def __init__(self, num_keypoints: int, seg_channels: int = 1, width_mult: float = 1.0,
+                 pretrained_backbone: bool = True):
+        super(StudentModel, self).__init__()
+        # 使用MobileNetV3作为轻量级特征提取器
+        backbone_model = models.mobilenet_v3_large(
+            weights=models.MobileNet_V3_Large_Weights.IMAGENET1K_V1 if pretrained_backbone else None)
+        self.backbone = backbone_model.features
+
+        # 特征点索引，用于跳跃连接
+        self.skip_index_1 = 6  # 1/8分辨率特征点
+        self.skip_index_2 = 12  # 1/16分辨率特征点
+
+        # 特征降维卷积
         self.conv_reduce_low = nn.Sequential(
             nn.Conv2d(40, 64, kernel_size=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True)
-        )  # reduce 1/8 res feature (approx 40 ch) to 64
+        )
+
         self.conv_reduce_mid = nn.Sequential(
             nn.Conv2d(112, 64, kernel_size=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True)
-        )  # reduce 1/16 res feature (112 ch) to 64
+        )
+
         self.conv_reduce_high = nn.Sequential(
             nn.Conv2d(1280, 64, kernel_size=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True)
-        )  # reduce final 1/32 res feature (1280 ch) to 64
+        )
 
-        # Decoder convolution blocks to fuse features
+        # 特征融合卷积
         self.conv_fuse_mid = nn.Sequential(
             nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True)
-        )  # fuse 1/16 feature with upsampled 1/32
+        )
+
         self.conv_fuse_low = nn.Sequential(
             nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True)
-        )  # fuse 1/8 feature with upsampled 1/16
+        )
 
-        # Output heads for segmentation and pose
-        self.seg_head = nn.Conv2d(64, seg_channels, kernel_size=1)        # segmentation logits output (1 channel for binary mask)
-        self.pose_head = nn.Conv2d(64, num_keypoints, kernel_size=1)      # pose heatmap output (one channel per keypoint)
+        # 分割输出头
+        self.seg_head = nn.Conv2d(64, seg_channels, kernel_size=1)
+
+        # 新增：处理分割结果与特征融合的卷积层
+        self.seg_to_pose_conv = nn.Sequential(
+            nn.Conv2d(64 + seg_channels, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True)
+        )
+
+        # 姿态估计输出头
+        self.pose_head = nn.Conv2d(64, num_keypoints, kernel_size=1)
 
     def forward(self, x: torch.Tensor, return_features: bool = False):
         B, C, H, W = x.shape
-        # Backbone forward with manual capture of intermediate features
-        feat_low = None   # 1/8 resolution feature
-        feat_mid = None   # 1/16 resolution feature
-        feat_high = None  # 1/32 resolution (final backbone output)
+
+        # 特征提取
+        feat_low = None
+        feat_mid = None
+        feat_high = None
+
         out = x
         for i, layer in enumerate(self.backbone):
             out = layer(out)
             if i == self.skip_index_1:
-                feat_low = out               # feature at 1/8 resolution
+                feat_low = out
             if i == self.skip_index_2:
-                feat_mid = out              # feature at 1/16 resolution
-        feat_high = out                      # final feature at 1/32 resolution
+                feat_mid = out
+        feat_high = out
 
-        # Reduce channel dimensions of features
-        low = self.conv_reduce_low(feat_low)       # -> 64 channels at 1/8 res
-        mid = self.conv_reduce_mid(feat_mid)       # -> 64 channels at 1/16 res
-        high = self.conv_reduce_high(feat_high)    # -> 64 channels at 1/32 res
+        # 特征降维和融合
+        low = self.conv_reduce_low(feat_low)
+        mid = self.conv_reduce_mid(feat_mid)
+        high = self.conv_reduce_high(feat_high)
 
-        # Upsample high-level feature to 1/16 res and fuse with mid-level
+        # 上采样高级特征并与中级特征融合
         high_up = F.interpolate(high, size=mid.shape[2:], mode='bilinear', align_corners=False)
-        mid_fused = self.conv_fuse_mid(high_up + mid)  # combine high and mid features (64 channels at 1/16 res)
+        mid_fused = self.conv_fuse_mid(high_up + mid)
 
-        # Upsample fused mid feature to 1/8 res and fuse with low-level
+        # 上采样融合特征并与低级特征融合
         mid_up = F.interpolate(mid_fused, size=low.shape[2:], mode='bilinear', align_corners=False)
-        low_fused = self.conv_fuse_low(mid_up + low)    # combine with low features (64 channels at 1/8 res)
+        low_fused = self.conv_fuse_low(mid_up + low)
 
-        # Segmentation output: upsample to input resolution
-        seg_logits_small = self.seg_head(low_fused)     # raw logits at 1/8 res
+        # 分割输出
+        seg_logits_small = self.seg_head(low_fused)
         seg_logits = F.interpolate(seg_logits_small, size=(H, W), mode='bilinear', align_corners=False)
 
-        # Pose output: upsample one more time to 1/4 resolution for finer keypoint localization
+        # 关键修改：使用分割结果作为姿态估计的输入
+        seg_probs_small = torch.sigmoid(seg_logits_small)  # 将logits转换为概率
+
+        # 上采样特征至更高分辨率用于姿态估计
         pose_feat = F.interpolate(low_fused, scale_factor=2.0, mode='bilinear', align_corners=False)
-        pose_logits = self.pose_head(pose_feat)         # raw heatmap logits at ~1/4 of input size
+        seg_up = F.interpolate(seg_probs_small, size=pose_feat.shape[2:], mode='bilinear', align_corners=False)
+
+        # 将分割结果与特征融合
+        combined_feat = torch.cat([pose_feat, seg_up], dim=1)
+        pose_feat_refined = self.seg_to_pose_conv(combined_feat)
+
+        # 姿态估计输出
+        pose_logits = self.pose_head(pose_feat_refined)
 
         if not return_features:
             return seg_logits, pose_logits
-        # If features requested, return the fused feature maps as well for distillation
-        return seg_logits, pose_logits, low_fused, pose_feat
+
+        # 如果需要返回特征（用于蒸馏）
+        return seg_logits, pose_logits, low_fused, pose_feat_refined

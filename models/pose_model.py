@@ -1,34 +1,56 @@
+"""
+pose.py: Defines the enhanced pose estimation network.
+The network uses a ResNet backbone (e.g., ResNet-50) and deconvolutional layers
+to generate heatmaps for keypoint estimation.
+"""
+
 import torch
 import torch.nn as nn
 import torchvision.models as models
 
 class PoseEstimationModel(nn.Module):
-    """ResNet backbone with deconvolutional head for keypoint heatmap prediction."""
-    def __init__(self, backbone="resnet50", num_keypoints=17):
+    def __init__(self, in_channels: int = 3, num_keypoints: int = 17):
         super().__init__()
-        self.num_keypoints = num_keypoints
-        # Load ResNet backbone pre-trained
-        resnet = getattr(models, backbone)(pretrained=True)
-        # Use all layers up to the final conv layer (exclude avgpool and fc)
-        # For ResNet50, final conv layer output is 2048 channels (stride 32 downsampled from input)
-        self.backbone = nn.Sequential(*list(resnet.children())[:-2])
-        # Deconvolutional head: 3 deconv layers to upsample from stride 32 to stride 4 (2x2x2 upsampling)
-        # Each deconv layer outputs 256 channels
-        self.deconv_layers = nn.Sequential(
-            nn.ConvTranspose2d(2048 if backbone in ["resnet50", "resnet101", "resnet152"] else 512,
-                               256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(256), nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(256), nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(256), nn.ReLU(inplace=True),
-        )
-        # Final prediction conv layer: 1x1 conv to get one heatmap per keypoint
-        self.final_layer = nn.Conv2d(256, num_keypoints, kernel_size=1)
+        # Use a pretrained ResNet backbone (e.g., ResNet-50)
+        resnet = models.resnet50(pretrained=True)
+        # Modify first conv layer to accept in_channels (e.g., 3 or 3+segmentation_channels)
+        self.backbone = resnet
+        if in_channels != 3:
+            # Replace the first conv layer
+            self.backbone.conv1 = nn.Conv2d(
+                in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False
+            )
+        # Remove fully connected and pool layers
+        self.backbone = nn.Sequential(*list(self.backbone.children())[:-2])  # up to conv5_x
 
-    def forward(self, x):
-        # x shape: [B,3,H,W]
-        feat = self.backbone(x)
-        out = self.deconv_layers(feat)
-        out = self.final_layer(out)  # shape: [B, num_keypoints, H/4, W/4] assuming input H,W multiple of 32
-        return out
+        # Deconvolutional layers to upsample and refine heatmaps
+        self.deconv_layers = self._make_deconv_layer()
+
+        # Final layer to produce heatmaps (one per keypoint)
+        self.final_layer = nn.Conv2d(
+            in_channels=256, out_channels=num_keypoints, kernel_size=1, stride=1, padding=0
+        )
+
+    def _make_deconv_layer(self):
+        layers = []
+        # Example: 3 layers of deconv (like SimpleBaseline)
+        layers.append(nn.ConvTranspose2d(2048, 256, kernel_size=4, stride=2, padding=1, bias=False))
+        layers.append(nn.BatchNorm2d(256))
+        layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False))
+        layers.append(nn.BatchNorm2d(256))
+        layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False))
+        layers.append(nn.BatchNorm2d(256))
+        layers.append(nn.ReLU(inplace=True))
+        return nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for pose estimation. Input x should have shape [B, in_channels, H, W].
+        Returns heatmap predictions [B, num_keypoints, H_out, W_out] (typically downsampled).
+        """
+        features = self.backbone(x)       # Extract features
+        heatmaps = self.deconv_layers(features)
+        heatmaps = self.final_layer(heatmaps)
+        return heatmaps
