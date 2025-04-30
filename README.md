@@ -19,8 +19,7 @@ We train on the COCO and MPII datasets, and integrate Weights & Biases (wandb) f
 
 ## Usage
 1. Install dependencies: `pip install -r requirements.txt`
-2. Edit `config.py` to set dataset paths and wandb project details.
-3. Train segmentation: `python train_segmentation.py`
-4. Train pose estimation: `python train_pose.py`
+2. Download gsutil: `curl https://sdk.cloud.google.com | bash`
+3. Train segmentation: `python train_complete.py`
 5. Trained models saved as `best_segmentation_model.pth` and `best_pose_model.pth`.
 
