@@ -9,6 +9,10 @@ class SegmentationLoss(nn.Module):
         self.bce_loss = nn.BCEWithLogitsLoss()
 
     def forward(self, pred, target):
+        # 如果 target 只有 H×W，没有通道维度，就加上一个单通道维度
+        # pred: [N, C, H, W], target: [N, H, W] 或 [N, 1, H, W]
+        if target.dim() == pred.dim() - 1:
+            target = target.unsqueeze(1)
         return self.bce_loss(pred, target)
 
 
@@ -37,7 +41,8 @@ class KeypointsLoss(nn.Module):
                         # 高斯分布
                         grid_x, grid_y = torch.meshgrid(
                             torch.arange(heatmap.size(2)),
-                            torch.arange(heatmap.size(1))
+                            torch.arange(heatmap.size(1)),
+                            indexing='ij'
                         )
                         dist = (grid_x - x) ** 2 + (grid_y - y) ** 2
                         target[j] = torch.exp(-dist / (2 * 3 ** 2))
