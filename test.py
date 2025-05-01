@@ -1,152 +1,232 @@
-# validation_script.py
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+test.py: 实现完整的训练流程，包括 COCO 数据加载、可视化、教师模型训练、
+学生模型蒸馏训练、推理与结果可视化。
+"""
+
 import os
+import argparse
 import torch
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from PIL import Image
 import numpy as np
-import matplotlib.pyplot as plt
-import cv2
+import sys
 
-from torch.utils.data import DataLoader
+sys.path.insert(0, os.path.dirname(__file__))
 
-from datasets.coco import CocoMultiTask, get_transform, collate_fn
+from utils.coco import prepare_coco_dataset
+from utils.visualization import visualize_raw_samples, visualize_predictions
+from utils.loss import SegmentationLoss, KeypointsLoss, DistillationLoss
+from models.teacher_model import TeacherModel
 from models.student_model import StudentModel
-from utils.loss import SegmentationLoss, KeypointsLoss
-from utils.visualization import overlay_segmentation, draw_pose, heatmaps_to_keypoints
+from models.segmentation_model import UNetSegmentation
+from models.pose_model import PoseEstimationModel
 
 
-def validate_pipeline(
-        data_root: str,
-        ann_file: str,
-        model_path: str = None,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        save_dir: str = None,
-        num_samples: int = 4,
-        confidence_threshold: float = 0.3
-):
-    """端到端验证流程"""
-    # 初始化目录
-    if save_dir:
-        os.makedirs(save_dir, exist_ok=True)
+def parse_args():
+    parser = argparse.ArgumentParser(description="训练与验证模型")
+    parser.add_argument('--data_dir', type=str, default='run/data', help='COCO 数据集目录')
+    parser.add_argument('--output_dir', type=str, default='run', help='输出运行文件目录')
+    parser.add_argument('--teacher_epochs', type=int, default=2, help='教师模型训练 epoch 数')
+    parser.add_argument('--student_epochs', type=int, default=2, help='学生模型蒸馏训练 epoch 数')
+    parser.add_argument('--batch_size', type=int, default=1, help='批大小 (推荐1避免尺寸不匹配)')
+    parser.add_argument('--lr', type=float, default=1e-3, help='学习率')
+    parser.add_argument('--max_samples', type=int, default=5, help='最大样本数量 (None 表示全量)')
+    parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else'cpu',
+                        help='设备 (cpu 或 cuda)')
+    return parser.parse_args()
 
-    # 1. 数据加载验证
-    dataset = CocoMultiTask(
-        root=data_root,
-        transform=get_transform(train=False)
-    )
-    loader = DataLoader(dataset, batch_size=2, collate_fn=collate_fn, shuffle=True)
 
-    print("\n=== 数据加载验证 ===")
-    print(f"数据集样本数: {len(dataset)}")
-    batch = next(iter(loader))
-    images, masks, keypoints_list, vis_list = batch
-    print(f"图像张量形状: {images.shape} (BxCxHxW)")
-    print(f"掩码张量形状: {masks.shape} (Bx1xHxW)")
-    print(f"关键点列表长度: {len(keypoints_list)} (batch_size)")
-    print(f"首样本关键点形状: {keypoints_list[0].shape} (Nx2)")
+class COCODataset(Dataset):
+    """
+    PyTorch Dataset for COCO samples, with resizing to fixed dimensions for UNet compatibility.
+    """
 
-    # 2. 可视化原始数据样本
-    print("\n=== 原始数据可视化 ===")
-    for i in range(min(len(images), num_samples)):
-        img_np = images[i].permute(1, 2, 0).cpu().numpy()  # HWC
-        mask_np = masks[i][0].cpu().numpy()  # HW
+    def __init__(self, samples, img_transform=None, mask_transform=None):
+        self.samples = samples
+        self.img_transform = img_transform or transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+        ])
+        self.mask_transform = mask_transform or transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+        ])
 
-        # 转换关键点坐标到图像尺寸
-        h, w = img_np.shape[:2]
-        kps = keypoints_list[i].cpu().numpy() * np.array([w, h])
+    def __len__(self):
+        return len(self.samples)
 
-        # 可视化
-        vis_img = overlay_segmentation(
-            (img_np * 255).astype(np.uint8),
-            (mask_np > 0.5).astype(np.uint8),
-            alpha=0.3,
-            color=(0, 255, 0)
-        )
-        vis_img = draw_pose(
-            vis_img,
-            kps,
-            color_map='hsv'
-        )
+    def __getitem__(self, idx):
+        item = self.samples[idx]
+        img = Image.open(item['image_path']).convert('RGB')
+        img_tensor = self.img_transform(img)
 
-        if save_dir:
-            save_path = os.path.join(save_dir, f"sample_{i}_gt.jpg")
-            cv2.imwrite(save_path, cv2.cvtColor(vis_img, cv2.COLOR_RGB2BGR))
-            print(f"保存GT可视化: {save_path}")
+        mask_np = item['mask']
+        mask_img = Image.fromarray((mask_np * 255).astype(np.uint8))
+        mask_tensor = self.mask_transform(mask_img)
+        mask_tensor = (mask_tensor > 0.5).float()
+
+        kps = item.get('keypoints', None)
+        vis = item.get('visibility', None)
+        if kps is None or (isinstance(kps, np.ndarray) and kps.size == 0):
+            kps_tensor = torch.zeros((0, 2), dtype=torch.float32)
+            vis_tensor = torch.zeros((0,), dtype=torch.int32)
         else:
-            plt.imshow(vis_img)
-            plt.title(f"Sample {i} - Ground Truth")
-            plt.show()
+            coords = kps.astype(np.float32).copy()
+            coords[:, 0] = coords[:, 0] / mask_np.shape[1] * 256
+            coords[:, 1] = coords[:, 1] / mask_np.shape[0] * 256
+            kps_tensor = torch.from_numpy(coords)
+            vis_tensor = torch.from_numpy(vis.astype(np.int32))
 
-    # 3. 模型验证（如果提供模型路径）
-    if model_path:
-        print("\n=== 模型推理验证 ===")
-        model = StudentModel(num_keypoints=17, seg_channels=1).to(device)
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        model.eval()
+        return img_tensor, mask_tensor, kps_tensor, vis_tensor, item['image_path']
+
+
+def collate_fn(batch):
+    imgs = torch.stack([x[0] for x in batch])
+    masks = torch.stack([x[1] for x in batch])
+    keypoints = [x[2] for x in batch]
+    visibilities = [x[3] for x in batch]
+    paths = [x[4] for x in batch]
+    return imgs, masks, keypoints, visibilities, paths
+
+
+def train_teacher(model, loader, optimizer, seg_loss, kp_loss, device):
+    model.train()
+    total_loss = 0.0
+    for imgs, masks, kps, vs, _ in loader:
+        imgs, masks = imgs.to(device), masks.to(device)
+        kps = [t.to(device) for t in kps]
+        vs = [t.to(device) for t in vs]
+
+        seg_out, kp_out = model(imgs)
+        loss = seg_loss(seg_out, masks) + kp_loss(kp_out, kps, vs)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    print(f"教师模型训练平均损失: {total_loss / len(loader):.4f}")
+
+
+def train_student(student, teacher, loader, optimizer, distill_loss, device):
+    student.train()
+    teacher.eval()
+    total_loss = 0.0
+    for imgs, masks, kps, vs, _ in loader:
+        imgs, masks = imgs.to(device), masks.to(device)
+        kps = [t.to(device) for t in kps]
+        vs = [t.to(device) for t in vs]
 
         with torch.no_grad():
-            images = images.to(device)
-            seg_logits, pose_logits = model(images)
-
-        # 转换模型输出
-        pred_masks = (torch.sigmoid(seg_logits) > 0.5).cpu().numpy()
-        pose_heatmaps = torch.sigmoid(pose_logits).cpu()
-
-        # 可视化预测结果
-        for i in range(min(len(images), num_samples)):
-            # 获取预测结果
-            img_np = images[i].permute(1, 2, 0).cpu().numpy()
-            pred_mask = pred_masks[i][0]
-            keypoints, confidences = heatmaps_to_keypoints(pose_heatmaps[i], threshold=confidence_threshold)
-
-            # 转换坐标到图像尺寸
-            h, w = img_np.shape[:2]
-            keypoints *= np.array([w / pose_heatmaps.shape[-1], h / pose_heatmaps.shape[-2]])
-
-            # 可视化
-            vis_img = overlay_segmentation(
-                (img_np * 255).astype(np.uint8),
-                pred_mask.astype(np.uint8),
-                alpha=0.3,
-                color=(0, 0, 255)
-            )
-            vis_img = draw_pose(
-                vis_img,
-                keypoints[confidences > confidence_threshold],
-                confidences=confidences,
-                color_map='confidence'
-            )
-
-            if save_dir:
-                save_path = os.path.join(save_dir, f"sample_{i}_pred.jpg")
-                cv2.imwrite(save_path, cv2.cvtColor(vis_img, cv2.COLOR_RGB2BGR))
-                print(f"保存预测可视化: {save_path}")
-            else:
-                plt.imshow(vis_img)
-                plt.title(f"Sample {i} - Predictions")
-                plt.show()
-
-        # 4. 损失计算验证
-        print("\n=== 损失计算验证 ===")
-        seg_loss_fn = SegmentationLoss()
-        pose_loss_fn = KeypointsLoss()
-
-        seg_loss = seg_loss_fn(seg_logits, masks.to(device))
-        pose_loss = pose_loss_fn(pose_logits, keypoints_list, vis_list)
-
-        print(f"分割损失: {seg_loss.item():.4f}")
-        print(f"姿态损失: {pose_loss.item():.4f}")
+            t_seg, t_kp = teacher(imgs)
+        s_seg, s_kp = student(imgs)
+        loss, _ = distill_loss((s_seg, s_kp), (t_seg, t_kp), (masks, kps, vs))
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    print(f"学生蒸馏训练平均损失: {total_loss / len(loader):.4f}")
 
 
-if __name__ == "__main__":
-    datasets_path = "/run/data/"
-    # 配置参数
-    config = {
-        "data_root": f"./{datasets_path}/coco/images/val2017",
-        "ann_file": f"./{datasets_path}/coco/annotations/person_keypoints_val2017.json",
-        "model_path": "./checkpoints/best_student.pth",  # 可选
-        "save_dir": "./validation_results",
-        "device": "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu",
-        "num_samples": 4,
-        "confidence_threshold": 0.4
-    }
+def infer_and_visualize(model, loader, device, outdir, prefix):
+    model.eval()
+    results = []
+    vis_dir = os.path.join(outdir, 'vis', prefix)
+    os.makedirs(vis_dir, exist_ok=True)
+    for imgs, masks, kps, vs, paths in loader:
+        imgs = imgs.to(device)
+        with torch.no_grad():
+            seg_out, kp_out = model(imgs)
+        seg_prob = torch.sigmoid(seg_out)
+        seg_resized = F.interpolate(seg_prob, size=masks.shape[-2:], mode='bilinear', align_corners=False)
+        seg_bin = (seg_resized > 0.5).squeeze(1).cpu().numpy()
+        hm = kp_out.cpu().numpy()
 
-    validate_pipeline(**config)
+        for i, path in enumerate(paths):
+            orig_img = Image.open(path)
+            orig_w, orig_h = orig_img.size
+
+            mask_pred = Image.fromarray((seg_bin[i] * 255).astype(np.uint8))
+            mask_pred = mask_pred.resize((orig_w, orig_h), resample=Image.NEAREST)
+            mask_pred_np = np.array(mask_pred).astype(np.uint8)
+
+            # 生成 gt_mask
+            gt_mask_img = Image.fromarray((masks[i].squeeze(0).numpy() * 255).astype(np.uint8), mode='L')
+            gt_mask_resized = gt_mask_img.resize((orig_w, orig_h), resample=Image.NEAREST)
+            gt_mask_np = (np.array(gt_mask_resized) > 128).astype(np.uint8)
+
+            coords = []
+            for heat in hm[i]:
+                y, x = np.unravel_index(heat.argmax(), heat.shape)
+                dx = x * 256 / heat.shape[1]
+                dy = y * 256 / heat.shape[0]
+                coord_x = dx * orig_w / 256
+                coord_y = dy * orig_h / 256
+                coords.append([coord_x, coord_y])
+
+            results.append({
+                'image_path': path,
+                'mask': mask_pred_np,
+                'keypoints': np.array(coords, dtype=np.float32),
+                'visibility': np.ones((len(coords),), dtype=np.int32),
+                'gt_mask': gt_mask_np,
+                'gt_keypoints': (kps[i].numpy().astype(np.float32) * np.array([[orig_w/256, orig_h/256]])),
+                'gt_visibility': vs[i].numpy(),
+            })
+    visualize_predictions(results, vis_dir)
+    print(f"{prefix} 可视化保存至 {vis_dir}")
+
+
+def main():
+    args = parse_args()
+
+    print(args)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    for sub in ['vis', 'models']:
+        os.makedirs(os.path.join(args.output_dir, sub), exist_ok=True)
+    device = torch.device(args.device)
+
+    train_samples = prepare_coco_dataset(args.data_dir, 'train', max_samples=args.max_samples)
+    if len(train_samples) == 0:
+        raise ValueError(f"训练集样本数为0，请检查路径 {args.data_dir}")
+    val_samples = prepare_coco_dataset(args.data_dir, 'validation', max_samples=10)
+
+    visualize_raw_samples(train_samples[:5], os.path.join(args.output_dir, 'vis', 'raw'))
+
+    train_loader = DataLoader(
+        COCODataset(train_samples),
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_fn
+    )
+    val_loader = DataLoader(
+        COCODataset(val_samples),
+        batch_size=1,
+        shuffle=False,
+        collate_fn=collate_fn
+    )
+
+    teacher = TeacherModel()
+    teacher.segmentation = UNetSegmentation(in_channels=3, num_classes=1)
+    teacher.pose = PoseEstimationModel(in_channels=4)
+    teacher.to(device)
+    opt_t = torch.optim.Adam(teacher.parameters(), lr=args.lr)
+    for _ in range(args.teacher_epochs):
+        train_teacher(teacher, train_loader, opt_t, SegmentationLoss(), KeypointsLoss(), device)
+    torch.save(teacher.state_dict(), os.path.join(args.output_dir, 'models', 'teacher.pth'))
+
+    student = StudentModel(num_keypoints=17).to(device)
+    opt_s = torch.optim.Adam(student.parameters(), lr=args.lr)
+    for _ in range(args.student_epochs):
+        train_student(student, teacher, train_loader, opt_s, DistillationLoss(0.5, 2.0), device)
+    torch.save(student.state_dict(), os.path.join(args.output_dir, 'models', 'student.pth'))
+
+    infer_and_visualize(teacher, val_loader, device, args.output_dir, 'teacher')
+    infer_and_visualize(student, val_loader, device, args.output_dir, 'student')
+
+
+if __name__ == '__main__':
+    main()
