@@ -42,6 +42,6 @@ jobs:
           # platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/Joint_Angle:latest
-            ghcr.io/${{ github.repository_owner }}/Joint_Angle:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/joint_angle:latest
+            ghcr.io/${{ github.repository_owner }}/joint_angle:${{ github.sha }}
 
