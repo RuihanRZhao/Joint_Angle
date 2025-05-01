@@ -10,10 +10,14 @@ from models.pose_model import PoseEstimationModel
 
 
 class TeacherModel(nn.Module):
-    def __init__(self, seg_model: nn.Module, pose_model: nn.Module):
+    def __init__(self):
         super().__init__()
-        self.segmentation = seg_model
-        self.pose = pose_model
+        # 分割分支
+        self.segmentation = UNetSegmentation()
+        # 获取分割输出的通道数（num_classes）
+        seg_out_channels = self.segmentation.conv_last.out_channels
+        # 姿态分支：输入 = RGB 图 + 分割 logits
+        self.pose = PoseEstimationModel(in_channels = 3 + seg_out_channels)
 
     def forward(self, x: torch.Tensor) -> (torch.Tensor, torch.Tensor):
         """

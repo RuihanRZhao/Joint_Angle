@@ -7,12 +7,13 @@ to generate heatmaps for keypoint estimation.
 import torch
 import torch.nn as nn
 import torchvision.models as models
+from torchvision.models import resnet50, ResNet50_Weights
 
 class PoseEstimationModel(nn.Module):
     def __init__(self, in_channels: int = 3, num_keypoints: int = 17):
         super().__init__()
         # Use a pretrained ResNet backbone (e.g., ResNet-50)
-        resnet = models.resnet50(pretrained=True)
+        resnet = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
         # Modify first conv layer to accept in_channels (e.g., 3 or 3+segmentation_channels)
         self.backbone = resnet
         if in_channels != 3:

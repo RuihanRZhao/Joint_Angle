@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class UNetSegmentation(nn.Module):
     def __init__(self, in_channels: int = 3, num_classes: int = 21):
         super().__init__()
