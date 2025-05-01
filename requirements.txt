@@ -1,7 +1,9 @@
-torch
-torchvision
-wandb
-numpy
-opencv-python
-pycocotools
-fiftyone
+# requirements.txt: Python 依赖列表
+
+# 不在此处指定 torch，因为基础镜像已包含 torch 与 cudnn
+torchvision       # torchvision 提供常用模型与 transforms
+pillow            # 图像读写
+numpy             # 数值计算
+opencv-python     # OpenCV 接口
+wandb             # 训练可视化与日志
+fiftyone          # COCO 数据集加载与管理
