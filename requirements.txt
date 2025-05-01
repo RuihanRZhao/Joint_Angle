@@ -4,3 +4,4 @@ wandb
 numpy
 opencv-python
 pycocotools
+fiftyone
