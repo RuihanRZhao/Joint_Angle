@@ -1,33 +1,35 @@
-# Dockerfile: PyTorch 训练环境
-FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
-LABEL authors="ryen"
+# Dockerfile: PyTorch 训练环境，添加 libcurl4 依赖修复 FiftyOne mongod 启动失败
+FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-runtime
 
-# 禁用交互式安装
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1
+# 安装系统依赖（包含 libcurl4 以支持 FiftyOne 的 mongod）
+RUN apt-get update && apt-get install -y \
+    git \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libcurl4 \
+ && rm -rf /var/lib/apt/lists/*
 
-# 安装系统依赖（opencv、ffmpeg 等常用库）
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      git \
-      libglib2.0-0 \
-      libsm6 \
-      libxext6 \
-      libxrender-dev \
-      libgl1 \
-      ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
-
-# 升级 pip 并安装 Python 依赖
+# 安装 Python 依赖
 RUN pip install --upgrade pip
+RUN pip install \
+    torchvision \
+    pillow \
+    numpy \
+    wandb \
+    fiftyone \
+    opencv-python \
+    pycocotools
 
-# 复制并安装项目依赖
+# 设置工作目录
 WORKDIR /workspace
-COPY requirements.txt /workspace/requirements.txt
-RUN pip install -r requirements.txt
 
 # 复制项目代码
 COPY . /workspace
 
-# 默认训练入口（可按需调整）
+# 防止 Python 输出被缓存
+ENV PYTHONUNBUFFERED=1
+
+# 入口命令：运行训练脚本
 CMD ["python", "train.py", "--data_dir", "run/data", "--output_dir", "run"]
