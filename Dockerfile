@@ -1,5 +1,5 @@
 # Dockerfile: PyTorch 训练环境
-FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-runtime
+FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 LABEL authors="ryen"
 
 # 禁用交互式安装
