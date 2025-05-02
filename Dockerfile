@@ -1,5 +1,5 @@
 # Dockerfile: PyTorch 训练环境，添加 libcurl4 依赖修复 FiftyOne mongod 启动失败
-FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-runtime
+FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 # 安装系统依赖（包含 libcurl4 以支持 FiftyOne 的 mongod）
 RUN apt-get update && apt-get install -y \
