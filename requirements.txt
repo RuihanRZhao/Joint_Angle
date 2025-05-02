@@ -7,3 +7,5 @@ numpy             # 数值计算
 opencv-python     # OpenCV 接口
 wandb             # 训练可视化与日志
 fiftyone          # COCO 数据集加载与管理
+pydantic<2.0.0
+pycocotools

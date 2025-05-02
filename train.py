@@ -254,7 +254,7 @@ def main():
     optimizer_t = torch.optim.Adam(teacher.parameters(), lr=args.lr)
     # 选择学习率调度器
     if args.scheduler == 'plateau':
-        scheduler_t = ReduceLROnPlateau(optimizer_t, mode='min', factor=0.5, patience=3, verbose=True)
+        scheduler_t = ReduceLROnPlateau(optimizer_t, mode='min', factor=0.5, patience=3)
     else:
         scheduler_t = CosineAnnealingLR(optimizer_t, T_max=args.teacher_epochs)
     earlystop_t = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
@@ -297,7 +297,7 @@ def main():
     student = StudentModel(num_keypoints=17, seg_channels=1).to(device)
     optimizer_s = torch.optim.Adam(student.parameters(), lr=args.lr)
     if args.scheduler == 'plateau':
-        scheduler_s = ReduceLROnPlateau(optimizer_s, mode='min', factor=0.5, patience=3, verbose=True)
+        scheduler_s = ReduceLROnPlateau(optimizer_s, mode='min', factor=0.5, patience=3)
     else:
         scheduler_s = CosineAnnealingLR(optimizer_s, T_max=args.student_epochs)
     earlystop_s = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
