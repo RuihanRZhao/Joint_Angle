@@ -3,9 +3,9 @@ name: Build & Publish Docker image
 # 触发条件：当代码 push 或 PR 到 maaster 分支时执行
 on:
   push:
-    branches: [ maaster ]
+    branches: [ master ]
   pull_request:
-    branches: [ maaster ]
+    branches: [ master ]
 
 jobs:
   build-and-publish:
