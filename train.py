@@ -28,7 +28,7 @@ class EarlyStopping:
     """
     监控验证损失，当连续若干 epoch 无改进时提前终止训练
     """
-    def __init__(self, patience=5, min_delta=0.0):
+    def __init__(self, patience=10, min_delta=0.0):
         self.patience = patience  # 耐心值
         self.min_delta = min_delta  # 最小改进阈值
         self.counter = 0
@@ -301,7 +301,7 @@ def main():
     else:
         scheduler_s = CosineAnnealingLR(optimizer_s, T_max=args.student_epochs)
     earlystop_s = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
-    wandb_logger_t = WandbLogger(_project="Student_Model",
+    wandb_logger_s = WandbLogger(_project="Student_Model",
                                  _entity="joint_angle",
                                  config=vars(args))
 
