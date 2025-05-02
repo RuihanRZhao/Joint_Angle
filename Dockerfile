@@ -1,5 +1,5 @@
 # Dockerfile: PyTorch 训练环境，支持非交互式安装，修复 FiftyOne mongod 启动
-FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-runtime
+FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 # 设置非交互式安装环境，防止 tzdata 配置交互提示
 ENV DEBIAN_FRONTEND=noninteractive
