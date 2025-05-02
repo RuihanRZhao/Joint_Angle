@@ -1,4 +1,9 @@
 # requirements.txt: Python 依赖列表
+--index-url https://download.pytorch.org/whl/nightly/cu128
+--extra-index-url https://pypi.org/simple
+
+torch==2.7.0
+torchvision==0.22.0
 
 # 不在此处指定 torch，因为基础镜像已包含 torch 与 cudnn
 torchvision       # torchvision 提供常用模型与 transforms
