@@ -1,11 +1,11 @@
 name: Build & Publish Docker image
 
-# 触发条件：当代码 push 或 PR 到 master 分支时执行
+# 触发条件：当代码 push 或 PR 到 maaster 分支时执行
 on:
   push:
-    branches: [ master ]
+    branches: [ maaster ]
   pull_request:
-    branches: [ master ]
+    branches: [ maaster ]
 
 jobs:
   build-and-publish:
@@ -42,6 +42,5 @@ jobs:
           # platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/ruihanzhao/joint_angle:latest
-            ghcr.io/ruihanzhao/joint_angle:${{ github.sha }}
-
+            ghcr.io/ruihanrzhao/joint_angle:latest
+            ghcr.io/ruihanrzhao/joint_angle:${{ github.sha }}
