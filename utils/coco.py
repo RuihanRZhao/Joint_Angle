@@ -1,135 +1,148 @@
 import os
+import json
+import requests
+from pycocotools.coco import COCO
+from pycocotools import mask as maskUtils
 import numpy as np
-import fiftyone as fo
-import fiftyone.zoo as foz
-
+from multiprocessing.pool import ThreadPool
+from PIL import Image
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
-from PIL import Image
+from tqdm import tqdm
 
 
-def prepare_coco_dataset(root_dir, split, max_samples=None, force_reload=False):
+def prepare_coco_dataset(root_dir, split='train', max_samples=None, force_reload=False, num_workers=8):
     """
-    加载 COCO-2017 数据集并提取样本列表，保证分割 mask 重构为原图尺寸。
+    高效加载 COCO-2017 数据集：支持 'train'/'val'/'validation'，仅下载缺失文件，缓存索引，并显示进度。
 
-    root_dir: 数据根目录，用于 fo.config.dataset_zoo_dir
-    split: 'train' 或 'validation'
-    max_samples: 最大样本量，None 表示全量
-    force_reload: 布尔值，若为 True 则强制重新下载数据集
+    参数:
+        root_dir (str): 数据根目录
+        split (str): 'train' 或 'val'/'validation'
+        max_samples (int|None): 最多加载样本数
+        force_reload (bool): 强制重建本地索引和重新下载缺失文件
+        num_workers (int): 并行下载线程数
 
     返回:
-        List of dicts, 每个包含:
-            image_path (str)
-            mask (np.ndarray) 二值seg掩码 (H, W)
-            keypoints (np.ndarray) 关键点坐标 (M,2)
-            visibility (np.ndarray) 可见性 (M,)
+        List[dict]: 每项包含 image_path, mask(np.uint8), keypoints(np.float32), visibility(np.int)
     """
-    # 指定下载目录
-    fo.config.dataset_zoo_dir = root_dir
-
-    dataset_name = f"coco-2017-{split}"
-    dataset_path = os.path.join(root_dir, dataset_name)
-
-    # 如果本地存在并且不强制重新加载，则跳过下载
-    if os.path.isdir(dataset_path) and not force_reload:
-        print(f"[DEBUG] Dataset found at {dataset_path}, skipping download.")
+    # 归一化 split 名称
+    norm = split.lower()
+    if norm in ('validation', 'val'):
+        ann_split = 'val'
+    elif norm == 'train':
+        ann_split = 'train'
     else:
-        if force_reload and os.path.isdir(dataset_path):
-            print(f"[DEBUG] force_reload=True, removing existing dataset at {dataset_path}.")
-            import shutil;
-            shutil.rmtree(dataset_path)
-        print(f"[DEBUG] Loading COCO-2017 split={split}, max_samples={max_samples}")
-        dataset = foz.load_zoo_dataset(
-            "coco-2017",
-            split=split,
-            label_types=["segmentations", "keypoints"],
-            classes=["person"],
-            max_samples=max_samples,
-        )
-        print(f"[DEBUG] FiftyOne loaded {len(dataset)} samples")
+        raise ValueError(f"Unsupported split '{split}', use 'train' or 'val'/'validation'.")
 
-    # 若之前跳过下载，则仍需加载dataset对象
-    if 'dataset' not in locals():
-        dataset = foz.load_zoo_dataset(
-            "coco-2017",
-            split=split,
-            label_types=["segmentations", "keypoints"],
-            classes=["person"],
-            max_samples=max_samples,
-        )
+    # 创建必要目录
+    ann_dir = os.path.join(root_dir, 'annotations')
+    images_dir = os.path.join(root_dir, f'images/{ann_split}2017')
+    os.makedirs(ann_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
 
+    # annotation 文件 URL 和本地路径
+    ann_url = 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
+    ann_zip = os.path.join(ann_dir, 'annotations_trainval2017.zip')
+    ann_file = os.path.join(ann_dir, f'instances_{ann_split}2017.json')
+
+    # 下载并解压注释文件
+    if not os.path.exists(ann_file) or force_reload:
+        if not os.path.exists(ann_zip) or force_reload:
+            response = requests.get(ann_url, stream=True)
+            total_size = int(response.headers.get('content-length', 0))
+            with open(ann_zip, 'wb') as f:
+                for chunk in tqdm(response.iter_content(1024 * 1024), total=max(1, total_size // (1024*1024)), desc='Downloading annotations', unit='MB'):
+                    f.write(chunk)
+        import zipfile
+        with zipfile.ZipFile(ann_zip, 'r') as z:
+            member = f'annotations/instances_{ann_split}2017.json'
+            z.extract(member, ann_dir)
+        extracted = os.path.join(ann_dir, member)
+        if os.path.exists(extracted):
+            os.replace(extracted, ann_file)
+        nested = os.path.join(ann_dir, 'annotations')
+        if os.path.isdir(nested):
+            try: os.rmdir(nested)
+            except OSError: pass
+
+    # 加载 COCO annotation
+    coco = COCO(ann_file)
+    cat_ids = coco.getCatIds(['person'])
+    img_ids = coco.getImgIds(catIds=cat_ids)
+    if max_samples is not None:
+        img_ids = img_ids[:max_samples]
+
+    # 缓存或加载图片元数据索引
+    index_path = os.path.join(root_dir, f'coco_index_{ann_split}.json')
+    if os.path.exists(index_path) and not force_reload:
+        with open(index_path, 'r') as f:
+            img_info = json.load(f)
+    else:
+        img_info = {str(i): coco.loadImgs(i)[0] for i in img_ids}
+        with open(index_path, 'w') as f:
+            json.dump(img_info, f)
+
+    # 下载缺失或损坏的图片，显示进度
+    def download(img):
+        url = img['coco_url']
+        dst = os.path.join(images_dir, img['file_name'])
+        r = requests.get(url, stream=True)
+        with open(dst, 'wb') as f:
+            for chunk in r.iter_content(1024 * 512):
+                f.write(chunk)
+
+    infos = list(img_info.values())
+    to_download = [info for info in infos
+                   if not os.path.exists(os.path.join(images_dir, info['file_name']))
+                   or os.path.getsize(os.path.join(images_dir, info['file_name'])) < 1024]
+    if to_download:
+        with ThreadPool(num_workers) as pool:
+            for _ in tqdm(pool.imap_unordered(download, to_download), total=len(to_download), desc='Downloading images'):
+                pass
+
+    # 构建样本列表，并显示进度
     samples = []
-    for idx, sample in enumerate(dataset):
-        img_path = sample.filepath
-        # 图像原始尺寸
-        meta = sample.metadata
-        H, W = meta.height, meta.width
+    for id_str, info in tqdm(img_info.items(), desc='Preparing samples'):
+        img_id = int(id_str)
+        file_path = os.path.join(images_dir, info['file_name'])
+        ann_ids = coco.getAnnIds(imgIds=img_id, catIds=cat_ids)
+        anns = coco.loadAnns(ann_ids)
 
-        # 获取标注
-        seg_field = getattr(sample, 'segmentations', None)
-        kp_field = getattr(sample, 'keypoints', None)
-        seg_dets = seg_field.detections if seg_field else []
-        kp_groups = kp_field.keypoints if kp_field else []
+        # 合并实例掩码，处理多维或二维mask
+        h, w = info['height'], info['width']
+        mask = np.zeros((h, w), dtype=np.uint8)
+        for ann in anns:
+            if 'segmentation' in ann:
+                rle = maskUtils.frPyObjects(ann['segmentation'], h, w)
+                m = maskUtils.decode(rle)
+                if m.ndim == 2:
+                    bin_mask = m.astype(np.uint8)
+                else:
+                    bin_mask = m.any(axis=2).astype(np.uint8)
+                mask |= bin_mask
 
-        if not seg_dets:
-            print(f"[DEBUG] sample {idx} 无 segmentation，跳过")
-            continue
-
-        combined_mask = None
-        # 合并所有实例掩码，重构为(full H,W)
-        for det in seg_dets:
-            mask = det.mask
-            if mask is None:
-                continue
-            m = np.array(mask, dtype=bool)
-            # 计算det在原图中的位置
-            bbox = det.bounding_box  # [x_rel, y_rel, w_rel, h_rel]
-            x0 = int(bbox[0] * W)
-            y0 = int(bbox[1] * H)
-            h_m, w_m = m.shape
-            # 防止超出边界
-            if y0 + h_m > H or x0 + w_m > W:
-                print(f"[WARNING] mask shape/box超出图像边界, idx={idx}")
-                h_m = min(h_m, H - y0)
-                w_m = min(w_m, W - x0)
-                m = m[:h_m, :w_m]
-            full_mask = np.zeros((H, W), dtype=bool)
-            full_mask[y0:y0 + h_m, x0:x0 + w_m] = m
-            combined_mask = full_mask if combined_mask is None else (combined_mask | full_mask)
-
-        if combined_mask is None:
-            print(f"[DEBUG] sample {idx} segmentation mask 全空，跳过")
-            continue
-
-        # 提取所有 keypoints
-        all_kps = []
-        all_vis = []
-        for group in kp_groups:
-            arr = np.array(group, dtype=np.float32).reshape(-1, 3)
-            coords = arr[:, :2]
-            vis = arr[:, 2]
-            for (x, y), v in zip(coords, vis):
-                all_kps.append([float(x), float(y)])
-                all_vis.append(int(v))
-        keypoints_arr = np.array(all_kps, dtype=np.float32).reshape(-1, 2) if all_kps else np.zeros((0, 2),
-                                                                                                    dtype=np.float32)
-        visibility_arr = np.array(all_vis, dtype=np.int32) if all_vis else np.zeros((0,), dtype=np.int32)
+        # 提取关键点和可见性
+        kps, vis = [], []
+        for ann in anns:
+            if 'keypoints' in ann:
+                arr = np.array(ann['keypoints']).reshape(-1, 3)
+                kps.extend(arr[:, :2].tolist())
+                vis.extend(arr[:, 2].tolist())
 
         samples.append({
-            'image_path': img_path,
-            'mask': combined_mask.astype(np.uint8),
-            'keypoints': keypoints_arr,
-            'visibility': visibility_arr,
+            'image_path': file_path,
+            'mask': mask,
+            'keypoints': np.array(kps, dtype=np.float32),
+            'visibility': np.array(vis, dtype=np.int32),
         })
 
-    print(f"[DEBUG] Prepared {len(samples)} valid samples for split={split}")
     return samples
 
 
 class COCODataset(Dataset):
     """
-    PyTorch Dataset for COCO samples, with resizing to fixed dimensions for UNet compatibility.
+    PyTorch Dataset for COCO 样本，带固定大小变换，兼容 UNet。
     """
 
     def __init__(self, samples, img_transform=None, mask_transform=None):

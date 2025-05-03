@@ -25,15 +25,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="教师模型训练与学生蒸馏训练脚本")
     parser.add_argument('--data_dir', type=str, default='run/data', help='COCO 数据集根目录')
     parser.add_argument('--output_dir', type=str, default='run', help='输出文件目录')
-    parser.add_argument('--teacher_epochs', type=int, default=2, help='教师模型训练轮数')
-    parser.add_argument('--student_epochs', type=int, default=2, help='学生蒸馏训练轮数')
+    parser.add_argument('--teacher_epochs', type=int, default=10000, help='教师模型训练轮数')
+    parser.add_argument('--student_epochs', type=int, default=1000, help='学生蒸馏训练轮数')
     parser.add_argument('--batch_size', type=int, default=8, help='训练批大小')
     parser.add_argument('--lr', type=float, default=1e-3, help='初始学习率')
     parser.add_argument('--min_delta', type=float, default=1e-4, help='EarlyStopping 最小改进阈值')
-    parser.add_argument('--patience', type=int, default=5, help='EarlyStopping 耐心值（轮）')
+    parser.add_argument('--patience', type=int, default=25, help='EarlyStopping 耐心值（轮）')
     parser.add_argument('--scheduler', type=str, default='plateau', choices=['plateau', 'cosine'], help='学习率调度策略')
     parser.add_argument('--device', type=str, default=('cuda' if torch.cuda.is_available() else 'cpu'), help='运行设备')
-    parser.add_argument('--val_viz_num', type=int, default=3, help='每轮上传至 WandB 的验证样本数量')
+    parser.add_argument('--val_viz_num', type=int, default=2, help='每轮上传至 WandB 的验证样本数量')
     return parser.parse_args()
 
 
@@ -59,70 +59,62 @@ class EarlyStopping:
                 print("EarlyStopping: Stop training!")
                 self.early_stop = True
 
+def log_gt_and_pred_to_wandb(
+    dataloader, teacher, student, device,
+    wandb_logger, num_viz: int, epoch: int
+):
+    """
+    随机选 num_viz 张验证样本，分别可视化 GT、Teacher 预测、Student 预测。
+    """
+    teacher.eval()
+    student.eval()
 
-def log_gt_and_pred_to_wandb(loader, teacher, student, device, wandb_logger, num_images, step, include_gt=True):
-    """
-    对比 GT 与模型输出（教师/学生）的分割与关键点，可视化并上传至 wandb
-    """
-    all_indices = list(range(len(loader.dataset)))
-    sampled = random.sample(all_indices, num_images)
-    log_images = []
-    for idx in sampled:
-        img_tensor, gt_mask, gt_kps, gt_vs, path = loader.dataset[idx]
-        orig = Image.open(path).convert('RGB')
+    dataset = dataloader.dataset
+    # 随机挑 num_viz 个索引
+    indices = random.sample(range(len(dataset)), num_viz)
+
+    for idx in indices:
+        # 直接从 Dataset 取单样本
+        img_tensor, gt_mask_tensor, _, _, _ = dataset[idx]
+        # 原图和 GT mask 转 numpy
+        img_arr = (img_tensor.numpy().transpose(1,2,0) * 255).astype(np.uint8)
+        gt_mask = (gt_mask_tensor.numpy().squeeze() * 255).astype(np.uint8)
+
+        # 批次维度后推理
         inp = img_tensor.unsqueeze(0).to(device)
         with torch.no_grad():
-            t_seg, t_kp = teacher(inp)
-            if student is not None:
-                s_seg, s_kp = student(inp)
+            t_out = teacher(inp)
+            s_out = student(inp)
 
-        # GT mask & keypoints: drop any singleton dims so we get a (H, W) array
-        mask_np = gt_mask.squeeze().cpu().numpy()  # e.g. (1,H,W) → (H,W)
-        mask_np = (mask_np * 255).astype(np.uint8)
-        gt_mask_img = Image.fromarray(mask_np).resize(orig.size)
-        kp_gt_img = orig.copy()
-        draw_gt = ImageDraw.Draw(kp_gt_img)
-        for kp, v in zip(gt_kps, gt_vs):
-            if v > 0:
-                x, y = kp
-                draw_gt.ellipse((x-3, y-3, x+3, y+3), outline='green', width=2)
-        # Teacher pred mask & keypoints
-        t_mask = Image.fromarray((torch.sigmoid(t_seg)[0,0].cpu().numpy() * 255).astype(np.uint8)).resize(orig.size)
-        t_kp_img = orig.copy()
-        draw_t = ImageDraw.Draw(t_kp_img)
-        pred_kps = torch.sigmoid(t_kp)[0].cpu().numpy()
-        for x, y in pred_kps[:, :2]:
-            draw_t.ellipse((x - 3, y - 3, x + 3, y + 3), outline='red', width=2)
-        # Another way with conf
-        # pred_kps = torch.sigmoid(t_kp)[0].cpu().numpy()
-        # for x, y in pred_kps[:, :2]:
-        #     draw_t.ellipse((x-3, y-3, x+3, y+3), outline='red', width=2)
+        # 支持模型返回 tuple 的情况
+        t_pred = t_out[0] if isinstance(t_out, tuple) else t_out
+        s_pred = s_out[0] if isinstance(s_out, tuple) else s_out
 
-        # Student pred mask & keypoints
-        if student is not None:
-            s_mask = Image.fromarray((torch.sigmoid(s_seg)[0,0].cpu().numpy() * 255).astype(np.uint8)).resize(orig.size)
-            s_kp_img = orig.copy()
-            draw_s = ImageDraw.Draw(s_kp_img)
-            for x, y in pred_kps[:, :2]:
-                draw_t.ellipse((x - 3, y - 3, x + 3, y + 3), outline='red', width=2)
-        #   Another way with conf
-        #   pred_kps = torch.sigmoid(t_kp)[0].cpu().numpy()
-        #   for x, y in pred_kps[:, :2]:
-        #       draw_t.ellipse((x-3, y-3, x+3, y+3), outline='red', width=2)
+        # 转回 CPU numpy
+        t_mask = (t_pred.cpu().numpy().squeeze() * 255).astype(np.uint8)
+        s_mask = (s_pred.cpu().numpy().squeeze() * 255).astype(np.uint8)
 
-        # 组织与上传
-        captions, images = ['Original'], [orig]
-        if include_gt:
-            captions += ['GT Mask', 'GT Keypoints']
-            images += [gt_mask_img, kp_gt_img]
-        captions += ['Teacher Mask', 'Teacher Keypoints']
-        images += [t_mask, t_kp_img]
-        if student is not None:
-            captions += ['Student Mask', 'Student Keypoints']
-            images += [s_mask, s_kp_img]
-        wandb_images = [wandb.Image(img, caption=cap) for img, cap in zip(images, captions)]
-        log_images.extend(wandb_images)
-    wandb_logger.log({f'val_compare_step_{step}': log_images}, step=step)
+        # 绘制辅助函数：将 mask 半透明叠加到原图
+        def overlay(mask_arr, color):
+            vis = Image.fromarray(img_arr)
+            draw = ImageDraw.Draw(vis, 'RGBA')
+            m = Image.fromarray(mask_arr).convert('L')
+            draw.bitmap((0,0), m, fill=color)
+            return vis
+
+        gt_vis      = overlay(gt_mask,      (255, 0,   0,   100))  # 红
+        teacher_vis = overlay(t_mask,       (0,   255, 0,   100))  # 绿
+        student_vis = overlay(s_mask,       (0,   0,   255, 100))  # 蓝
+
+        # 上传到 WandB
+        wandb_logger.log({
+            f"viz/sample_{idx}/GT":      wandb.Image(gt_vis),
+            f"viz/sample_{idx}/Teacher": wandb.Image(teacher_vis),
+            f"viz/sample_{idx}/Student": wandb.Image(student_vis),
+        }, step=epoch)
+
+    teacher.train()
+    student.train()
 
 
 def train_one_epoch_teacher(model, loader, optimizer, seg_loss_fn, kp_loss_fn, device):
@@ -254,16 +246,16 @@ def main():
         # 日志上传
         wandb_logger_t.log({
             'epoch': epoch,
-            'teacher/train_loss': train_loss,
-            'teacher/val_loss': val_loss,
+            'loss/train_loss': train_loss,
+            'loss/val_loss': val_loss,
             'teacher/lr': optimizer_t.param_groups[0]['lr'],
-            'teacher/avg_train_step_time': train_step_time,
-            'teacher/epoch_time': epoch_time,
+            'time/avg_train_step_time': train_step_time,
+            'time/epoch_time': epoch_time,
             'teacher/avg_grad_norm': train_grad_norm,
             'teacher/avg_weight_norm': train_weight_norm,
-            'teacher/throughput(samples/sec)': args.batch_size / train_step_time,
-            'teacher/gpu_memory_allocated': mem_alloc,
-            'teacher/gpu_memory_reserved': mem_reserved
+            'hardware/throughput(samples/sec)': args.batch_size / train_step_time,
+            'hardware/gpu_memory_allocated': mem_alloc,
+            'hardware/gpu_memory_reserved': mem_reserved
         }, step=epoch)
 
         # 参数与梯度分布
@@ -306,16 +298,16 @@ def main():
 
         log_data_s = {
             'epoch': epoch,
-            'student/train_loss': train_loss_s,
-            'student/val_loss': val_loss_s,
+            'loss/train_loss': train_loss_s,
+            'loss/val_loss': val_loss_s,
             'student/lr': optimizer_s.param_groups[0]['lr'],
-            'student/avg_train_step_time': student_step_time,
-            'student/epoch_time': epoch_time_s,
+            'time/avg_train_step_time': student_step_time,
+            'time/epoch_time': epoch_time_s,
             'student/avg_grad_norm': student_grad_norm,
             'student/avg_weight_norm': student_weight_norm,
-            'student/throughput(samples/sec)': args.batch_size / student_step_time,
-            'student/gpu_memory_allocated': mem_alloc_s,
-            'student/gpu_memory_reserved': mem_reserved_s
+            'hardware/throughput(samples/sec)': args.batch_size / student_step_time,
+            'hardware/gpu_memory_allocated': mem_alloc_s,
+            'hardware/gpu_memory_reserved': mem_reserved_s
         }
         log_data_s.update(metrics_s)
         wandb_logger_s.log(log_data_s, step=epoch)

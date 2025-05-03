@@ -96,9 +96,9 @@ class DistillationLoss(nn.Module):
         total_loss = self.alpha * distill_loss + (1 - self.alpha) * task_loss
 
         return total_loss, {
-            'total_loss': total_loss.item(),
-            'task_seg_loss': task_seg_loss.item(),
-            'task_pose_loss': task_pose_loss.item(),
-            'seg_distill_loss': seg_distill_loss.item(),
-            'pose_distill_loss': pose_distill_loss.item()
+            'total_loss': total_loss.detach().item(),
+            'task_seg_loss': task_seg_loss.detach().item(),
+            'task_pose_loss': task_pose_loss.detach().item(),
+            'seg_distill_loss': seg_distill_loss.detach().item(),
+            'pose_distill_loss': pose_distill_loss.detach().item()
         }
