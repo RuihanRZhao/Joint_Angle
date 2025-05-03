@@ -1,17 +1,22 @@
-# requirements.txt: Python 依赖列表
---index-url https://download.pytorch.org/whl/nightly/cu128
+# 指定 PyTorch nightly CUDA 12.8 源
+--index-url https://download.pytorch.org/whl/cu128
 --extra-index-url https://pypi.org/simple
 
+# PyTorch 及生态
 torch
-torchvision
+torchvision    # 常用模型与 transforms
 torchaudio
 
-# 不在此处指定 torch，因为基础镜像已包含 torch 与 cudnn
-torchvision       # torchvision 提供常用模型与 transforms
-pillow            # 图像读写
-numpy             # 数值计算
-opencv-python     # OpenCV 接口
-wandb             # 训练可视化与日志
-fiftyone          # COCO 数据集加载与管理
+# 图像处理
+pillow         # 图像读写
+opencv-python  # OpenCV 接口
+
+# 科学计算
+numpy          # 数值计算
+
+# 日志与可视化
+wandb          # 训练可视化与日志
+
+# 配套工具
 pydantic<2.0.0
 pycocotools
