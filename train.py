@@ -75,8 +75,11 @@ def log_gt_and_pred_to_wandb(loader, teacher, student, device, wandb_logger, num
             t_seg, t_kp = teacher(inp)
             if student is not None:
                 s_seg, s_kp = student(inp)
-        # GT mask & keypoints
-        gt_mask_img = Image.fromarray((gt_mask.numpy() * 255).astype(np.uint8)).resize(orig.size)
+
+        # GT mask & keypoints: drop any singleton dims so we get a (H, W) array
+        mask_np = gt_mask.squeeze().cpu().numpy()  # e.g. (1,H,W) → (H,W)
+        mask_np = (mask_np * 255).astype(np.uint8)
+        gt_mask_img = Image.fromarray(mask_np).resize(orig.size)
         kp_gt_img = orig.copy()
         draw_gt = ImageDraw.Draw(kp_gt_img)
         for kp, v in zip(gt_kps, gt_vs):
@@ -87,15 +90,26 @@ def log_gt_and_pred_to_wandb(loader, teacher, student, device, wandb_logger, num
         t_mask = Image.fromarray((torch.sigmoid(t_seg)[0,0].cpu().numpy() * 255).astype(np.uint8)).resize(orig.size)
         t_kp_img = orig.copy()
         draw_t = ImageDraw.Draw(t_kp_img)
-        for x, y in torch.sigmoid(t_kp)[0].cpu().numpy():
-            draw_t.ellipse((x-3, y-3, x+3, y+3), outline='red', width=2)
+        pred_kps = torch.sigmoid(t_kp)[0].cpu().numpy()
+        for x, y in pred_kps[:, :2]:
+            draw_t.ellipse((x - 3, y - 3, x + 3, y + 3), outline='red', width=2)
+        # Another way with conf
+        # pred_kps = torch.sigmoid(t_kp)[0].cpu().numpy()
+        # for x, y in pred_kps[:, :2]:
+        #     draw_t.ellipse((x-3, y-3, x+3, y+3), outline='red', width=2)
+
         # Student pred mask & keypoints
         if student is not None:
             s_mask = Image.fromarray((torch.sigmoid(s_seg)[0,0].cpu().numpy() * 255).astype(np.uint8)).resize(orig.size)
             s_kp_img = orig.copy()
             draw_s = ImageDraw.Draw(s_kp_img)
-            for x, y in torch.sigmoid(s_kp)[0].cpu().numpy():
-                draw_s.ellipse((x-3, y-3, x+3, y+3), outline='blue', width=2)
+            for x, y in pred_kps[:, :2]:
+                draw_t.ellipse((x - 3, y - 3, x + 3, y + 3), outline='red', width=2)
+        #   Another way with conf
+        #   pred_kps = torch.sigmoid(t_kp)[0].cpu().numpy()
+        #   for x, y in pred_kps[:, :2]:
+        #       draw_t.ellipse((x-3, y-3, x+3, y+3), outline='red', width=2)
+
         # 组织与上传
         captions, images = ['Original'], [orig]
         if include_gt:
@@ -132,7 +146,7 @@ def train_one_epoch_teacher(model, loader, optimizer, seg_loss_fn, kp_loss_fn, d
         weight_norms.append(weight_norm.item())
         optimizer.step()
         batch_times.append(time.time() - start_t)
-        total_loss += loss.item()
+        total_loss += loss.detach().item()
     avg_loss = total_loss / len(loader)
     return avg_loss, np.mean(batch_times), np.mean(grad_norms), np.mean(weight_norms)
 
@@ -173,7 +187,7 @@ def train_one_epoch_student(student, teacher, loader, optimizer, distill_loss_fn
         weight_norms.append(weight_norm.item())
         optimizer.step()
         batch_times.append(time.time() - start_t)
-        total_loss += loss.item()
+        total_loss += loss.detach().item()
         for k, v in metrics.items():
             metrics_agg[k] = metrics_agg.get(k, 0.0) + v
     avg_metrics = {k: v / len(loader) for k, v in metrics_agg.items()}

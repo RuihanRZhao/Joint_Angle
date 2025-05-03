@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import fiftyone as fo
 import fiftyone.zoo as foz
@@ -8,16 +9,17 @@ from torchvision import transforms
 from PIL import Image
 
 
-def prepare_coco_dataset(root_dir, split, max_samples=None):
+def prepare_coco_dataset(root_dir, split, max_samples=None, force_reload=False):
     """
     加载 COCO-2017 数据集并提取样本列表，保证分割 mask 重构为原图尺寸。
 
     root_dir: 数据根目录，用于 fo.config.dataset_zoo_dir
     split: 'train' 或 'validation'
     max_samples: 最大样本量，None 表示全量
+    force_reload: 布尔值，若为 True 则强制重新下载数据集
 
     返回:
-        List of dicts, each 包含:
+        List of dicts, 每个包含:
             image_path (str)
             mask (np.ndarray) 二值seg掩码 (H, W)
             keypoints (np.ndarray) 关键点坐标 (M,2)
@@ -26,15 +28,36 @@ def prepare_coco_dataset(root_dir, split, max_samples=None):
     # 指定下载目录
     fo.config.dataset_zoo_dir = root_dir
 
-    print(f"[DEBUG] Loading COCO-2017 split={split}, max_samples={max_samples}")
-    dataset = foz.load_zoo_dataset(
-        "coco-2017",
-        split=split,
-        label_types=["segmentations", "keypoints"],
-        classes=["person"],
-        max_samples=max_samples,
-    )
-    print(f"[DEBUG] FiftyOne loaded {len(dataset)} samples")
+    dataset_name = f"coco-2017-{split}"
+    dataset_path = os.path.join(root_dir, dataset_name)
+
+    # 如果本地存在并且不强制重新加载，则跳过下载
+    if os.path.isdir(dataset_path) and not force_reload:
+        print(f"[DEBUG] Dataset found at {dataset_path}, skipping download.")
+    else:
+        if force_reload and os.path.isdir(dataset_path):
+            print(f"[DEBUG] force_reload=True, removing existing dataset at {dataset_path}.")
+            import shutil;
+            shutil.rmtree(dataset_path)
+        print(f"[DEBUG] Loading COCO-2017 split={split}, max_samples={max_samples}")
+        dataset = foz.load_zoo_dataset(
+            "coco-2017",
+            split=split,
+            label_types=["segmentations", "keypoints"],
+            classes=["person"],
+            max_samples=max_samples,
+        )
+        print(f"[DEBUG] FiftyOne loaded {len(dataset)} samples")
+
+    # 若之前跳过下载，则仍需加载dataset对象
+    if 'dataset' not in locals():
+        dataset = foz.load_zoo_dataset(
+            "coco-2017",
+            split=split,
+            label_types=["segmentations", "keypoints"],
+            classes=["person"],
+            max_samples=max_samples,
+        )
 
     samples = []
     for idx, sample in enumerate(dataset):
@@ -72,7 +95,7 @@ def prepare_coco_dataset(root_dir, split, max_samples=None):
                 w_m = min(w_m, W - x0)
                 m = m[:h_m, :w_m]
             full_mask = np.zeros((H, W), dtype=bool)
-            full_mask[y0:y0+h_m, x0:x0+w_m] = m
+            full_mask[y0:y0 + h_m, x0:x0 + w_m] = m
             combined_mask = full_mask if combined_mask is None else (combined_mask | full_mask)
 
         if combined_mask is None:
@@ -89,7 +112,8 @@ def prepare_coco_dataset(root_dir, split, max_samples=None):
             for (x, y), v in zip(coords, vis):
                 all_kps.append([float(x), float(y)])
                 all_vis.append(int(v))
-        keypoints_arr = np.array(all_kps, dtype=np.float32).reshape(-1, 2) if all_kps else np.zeros((0,2), dtype=np.float32)
+        keypoints_arr = np.array(all_kps, dtype=np.float32).reshape(-1, 2) if all_kps else np.zeros((0, 2),
+                                                                                                    dtype=np.float32)
         visibility_arr = np.array(all_vis, dtype=np.int32) if all_vis else np.zeros((0,), dtype=np.int32)
 
         samples.append({
