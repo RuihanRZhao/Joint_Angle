@@ -204,24 +204,26 @@ class SegmentKeypointModel(nn.Module):
         self.postprocessor = PosePostProcessor()  # 你自己的后处理
 
     def forward(self, x):
-        feats = []
-        out = x
-        for i, layer in enumerate(self.features):
-            out = layer(out)
-            if i in self.out_indices:
-                feats.append(out)
-        # 上采样到最大空间分辨率
-        target_size = feats[0].shape[2:]
-        feats = [F.interpolate(f, size=target_size, mode='bilinear', align_corners=True) if f.shape[2:] != target_size else f for f in feats]
-        fused = torch.cat(feats, dim=1)
-        fused = self.fuse_conv(fused)
-
-        seg_logits = self.seg_head(fused)
-        heatmaps = self.pose_head(fused)
-
-        # 后处理得到multi_kps
-        multi_kps = self.postprocessor(heatmaps)
-        return seg_logits, multi_kps
+        features = self.features(x)
+        seg_logits = F.interpolate(
+            self.seg_head(features),
+            scale_factor=32,
+            mode='bilinear',
+            align_corners=True
+        )
+        pose_pred = F.interpolate(
+            self.pose_head(features),
+            scale_factor=32,
+            mode='bilinear',
+            align_corners=True
+        )
+        # 训练时直接返回张量
+        if self.training:
+            return seg_logits, pose_pred
+        # 推理时返回关键点坐标
+        else:
+            multi_kps = self.postprocessor(pose_pred)
+            return seg_logits, multi_kps
 
 
 if __name__ == "__main__":
