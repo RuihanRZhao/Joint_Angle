@@ -10,6 +10,12 @@ SKELETON = [
     (1,3),(2,4),(3,5),(4,6)
 ]
 
+COCO_KEYPOINT_NAMES = [
+    "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist", "left_hip", "right_hip",
+    "left_knee", "right_knee", "left_ankle", "right_ankle"
+]
 
 def overlay_mask(image: np.ndarray, mask: np.ndarray, alpha: float = 0.6) -> np.ndarray:
     """

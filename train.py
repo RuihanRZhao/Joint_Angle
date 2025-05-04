@@ -10,7 +10,7 @@ from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 import wandb
 
-from utils.visualization import SKELETON
+from utils.visualization import SKELETON, COCO_KEYPOINT_NAMES
 from models.SegKP_Model import SegmentKeypointModel
 from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 from early_stopping_pytorch import EarlyStopping
@@ -260,9 +260,32 @@ def train(args):
         avg_val_loss = val_loss / len(val_loader)
         val_time = time.time() - val_start
 
-        # 计算 evaluator 指标
-        seg_iou  = SegmentationEvaluator(all_pred_masks, all_gt_masks)
-        kp_acc   = PoseEvaluator(all_pred_kps, all_gt_kps)
+        # —— 计算 evaluator 指标 ——
+        # 分割 mIoU
+        seg_evaluator = SegmentationEvaluator(num_classes=2)
+        for pred_mask, gt_mask in zip(all_pred_masks, all_gt_masks):
+            # 把 numpy mask 转回 tensor，形状 (1,1,H,W)
+            pm_t = torch.from_numpy(pred_mask).unsqueeze(0).unsqueeze(0)
+            gt_t = torch.from_numpy(gt_mask).unsqueeze(0).unsqueeze(0)
+            seg_evaluator.update(pm_t, gt_t)
+        seg_iou = seg_evaluator.compute_miou()
+
+        # 关键点 AP
+        # 需要给 PoseEvaluator 提供注释文件路径和 keypoint 列表
+        pose_evaluator = PoseEvaluator(args.coco_ann_file, COCO_KEYPOINT_NAMES)
+        # 构造 batch_preds: list of (image_id, heatmaps, scores)
+        # 假设 all_pred_kps[i] 和 all_pred_scores[i] 是对应的预测
+        batch_preds = []
+        for img_id, kps in enumerate(all_pred_kps):
+            # 这里 scores 可选：用每个关键点组的平均置信度
+            score = np.mean([pt[2] if len(pt)>2 else 1.0 for person in kps for pt in person])
+            # heatmaps 不在这里重传，PoseEvaluator.update 会重新做 argmax
+            # 直接传 kps 和 score
+            batch_preds.append((img_id, kps, score))
+        pose_evaluator.update(batch_preds, None)
+        kp_acc = pose_evaluator.compute_ap()
+
+
 
         if kp_acc > best_ap:
             best_ap = kp_acc
