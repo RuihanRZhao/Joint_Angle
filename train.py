@@ -203,12 +203,14 @@ def train(args):
         # 验证
         val_start = time.time()
         model.eval()
-        val_start = time.time()
         val_loss = 0.0
 
         # 用于收集预测 & GT，用于评估
-        all_gt_masks, all_pred_masks = [], []
-        all_gt_kps, all_pred_kps = [], []
+        all_pred_masks, all_gt_masks = [], []
+        all_pred_kps, all_gt_kps = [], []
+        sample_seg_gts, sample_seg_preds = [], []
+        sample_pose_gts, sample_pose_preds = [], []
+        sample_sizes = []
 
         with torch.no_grad():
             for imgs, masks, hm, paf, _, _, sizes in val_loader:
@@ -255,9 +257,9 @@ def train(args):
         avg_val_loss = val_loss / len(val_loader)
         val_time = time.time() - val_start
 
-        # —— 调用 evaluator 计算指标 ——
-        seg_ap = SegmentationEvaluator(all_pred_masks, all_gt_masks)
-        kp_acc = PoseEvaluator(all_pred_kps, all_gt_kps)
+        # 计算 evaluator 指标
+        seg_iou  = SegmentationEvaluator(all_pred_masks, all_gt_masks)
+        kp_acc   = PoseEvaluator(all_pred_kps, all_gt_kps)
 
         if kp_acc > best_ap:
             best_ap = kp_acc
