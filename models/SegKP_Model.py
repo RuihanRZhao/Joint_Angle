@@ -171,21 +171,19 @@ class SegmentKeypointModel(nn.Module):
         backbone = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.DEFAULT)
         self.features = backbone.features
 
-        # 选取合适的层索引
-        self.out_indices = [3, 6, 13]  # 以实际网络结构为准
+        # 获取中间层特征
+        self.stage1 = nn.Sequential(*self.features[:4])   # 输出48通道
+        self.stage2 = nn.Sequential(*self.features[4:7])  # 输出80通道
+        self.stage3 = nn.Sequential(*self.features[7:13]) # 输出160通道
 
-        # 获取每层输出通道
-        self.out_channels = [self.features[i].out_channels for i in self.out_indices]
-        in_channels = sum(self.out_channels)
-
-        # 对齐通道
-        self.fuse_conv = nn.Sequential(
-            nn.Conv2d(in_channels, 256, 1),
+        # 通道对齐
+        self.fusion_conv = nn.Sequential(
+            nn.Conv2d(48 + 80 + 160, 256, 1),  # 将288通道压缩到256
             nn.BatchNorm2d(256),
             nn.ReLU()
         )
 
-        # 分割头
+        # 分割头（输入256通道）
         self.seg_head = nn.Sequential(
             nn.Conv2d(256, 64, 3, padding=1),
             nn.BatchNorm2d(64),
@@ -193,30 +191,35 @@ class SegmentKeypointModel(nn.Module):
             nn.Conv2d(64, 1, 1)
         )
 
-        # 姿态头
+        # 姿态头（输入256通道）
         self.pose_head = nn.Sequential(
             nn.Conv2d(256, 256, 3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 51, 1)  # 17个关键点
+            nn.Conv2d(256, 51, 1)  # 17个关键点+34个PAF
         )
 
         self.postprocessor = PosePostProcessor()  # 你自己的后处理
 
     def forward(self, x):
-        features = self.features(x)
-        seg_logits = F.interpolate(
-            self.seg_head(features),
-            scale_factor=32,
-            mode='bilinear',
-            align_corners=True
-        )
-        pose_pred = F.interpolate(
-            self.pose_head(features),
-            scale_factor=32,
-            mode='bilinear',
-            align_corners=True
-        )
+        # 提取多尺度特征
+        s1 = self.stage1(x)  # [B,48,H/2,W/2]
+        s2 = self.stage2(x)  # [B,80,H/4,W/4]
+        s3 = self.stage3(x)  # [B,160,H/8,W/8]
+
+        # 上采样对齐尺寸
+        s1 = F.interpolate(s1, scale_factor=2, mode='bilinear')  # H/2 -> H/4
+        s2 = F.interpolate(s2, scale_factor=4, mode='bilinear')  # H/4 -> H/8
+        s3 = F.interpolate(s3, scale_factor=8, mode='bilinear')  # H/8 -> H/16
+
+        # 拼接特征并压缩通道
+        fused = torch.cat([s1, s2, s3], dim=1)  # 48+80+160=288通道
+        fused = self.fusion_conv(fused)  # 288->256通道
+
+        # 生成输出
+        seg_logits = self.seg_head(fused)
+        pose_pred = self.pose_head(fused)
+
         # 训练时直接返回张量
         if self.training:
             return seg_logits, pose_pred
