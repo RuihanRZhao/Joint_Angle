@@ -81,17 +81,23 @@ def train(args):
     ann_file = os.path.join(args.data_dir, "annotations", "person_keypoints_val2017.json")
 
     # 数据加载
-    train_s = prepare_coco_dataset(args.data_dir, split='train', max_samples=args.max_samples)
-    val_s   = prepare_coco_dataset(args.data_dir, split='val',   max_samples=args.max_samples)
+    train_samples = prepare_coco_dataset(args.data_dir, split='train', max_samples=args.max_samples)
+    val_samples   = prepare_coco_dataset(args.data_dir, split='val',   max_samples=args.max_samples)
     train_loader = DataLoader(
-        COCODataset(train_s), batch_size=args.batch_size,
-        shuffle=True,  num_workers=args.num_workers,
-        pin_memory=True, collate_fn=collate_fn
+        COCODataset(train_samples),
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        collate_fn=collate_fn
     )
-    val_loader   = DataLoader(
-        COCODataset(val_s),   batch_size=args.batch_size,
-        shuffle=False, num_workers=args.num_workers,
-        pin_memory=True, collate_fn=collate_fn
+    val_loader = DataLoader(
+        COCODataset(val_samples),
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        collate_fn=collate_fn
     )
 
     # 模型、优化器、调度器、AMP、EarlyStopping
@@ -117,36 +123,154 @@ def train(args):
 
     for epoch in range(1, args.epochs + 1):
         # —— 训练阶段 —— #
-        # …（训练部分保持不变）…
+        t0 = time.time()
+        model.train()
+        train_loss = 0.0
+        pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch}/{args.epochs} [Train]")
+
+        for batch_idx, (imgs, masks, hm, paf, _, _, _) in enumerate(train_loader, start=1):
+            bs = time.time()
+            imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
+
+            optimizer.zero_grad()
+            if args.use_fp16:
+                with autocast(device_type='cuda', enabled=True):
+                    seg_pred, pose_pred = model(imgs)
+                    loss = criterion(seg_pred, masks, pose_pred, hm, paf)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                seg_pred, pose_pred = model(imgs)
+                loss = criterion(seg_pred, masks, pose_pred, hm, paf)
+                loss.backward()
+                optimizer.step()
+
+            scheduler.step()
+            train_loss += loss.item()
+
+            # Batch 级日志
+            bt        = time.time() - bs
+            lr        = optimizer.param_groups[0]['lr']
+            grad_norm = sum(p.grad.norm(2).item()**2 for p in model.parameters() if p.grad is not None)**0.5
+
+            wandb.log({
+                'train/batch_loss': loss.item(),
+                'train/lr': lr,
+                'train/grad_norm': grad_norm,
+                'train/batch_time': bt
+            }, step=(epoch-1)*len(train_loader) + batch_idx)
+
+            pbar.update(1)
+            pbar.set_postfix({
+                'loss': f"{loss.item():.4f}",
+                'lr':   f"{lr:.2e}",
+                'bt':   f"{bt:.2f}s"
+            })
+
+        pbar.close()
+        avg_train_loss = train_loss / len(train_loader)
+        train_time     = time.time() - t0
 
         # —— 验证 & 评估阶段 —— #
-        # …（前面验证采集部分保持不变）…
+        v0 = time.time()
+        model.eval()
+        val_loss = 0.0
 
-        # 分割 mIoU 评估
+        # 初始化收集列表
+        all_pred_masks, all_gt_masks = [], []
+        all_heatmaps = []   # 原始预测 heatmaps (numpy arrays)
+        sample_seg_gts, sample_seg_preds = [], []
+        sample_pose_gts, sample_pose_preds = [], []
+        orig_sizes = []
+
+        with torch.no_grad():
+            for imgs, masks, hm, paf, _, _, sizes in val_loader:
+                imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
+
+                with autocast(device_type='cuda', enabled=args.use_fp16):
+                    seg_pred, pose_pred = model(imgs)
+                    loss = criterion(seg_pred, masks, pose_pred, hm, paf)
+                val_loss += loss.item()
+
+                # 收集分割结果
+                pm = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy()
+                for b in range(pm.shape[0]):
+                    h, w    = masks[b,0].shape
+                    m_uint8 = pm[b,0].astype(np.uint8)
+                    m_res   = cv2.resize(m_uint8, (int(w), int(h)), interpolation=cv2.INTER_NEAREST)
+                    all_pred_masks.append(m_res)
+                    all_gt_masks.append(masks[b,0].cpu().numpy())
+
+                    # 样本可视化缓存
+                    sample_seg_gts.append(masks[b])
+                    sample_seg_preds.append(seg_pred[b])
+                    sample_pose_gts.append(hm[b])
+                    sample_pose_preds.append(pose_pred[b])
+                    orig_sizes.append((h, w))
+
+                # 收集原始 heatmap
+                all_heatmaps.extend(pose_pred.cpu().numpy())
+
+        avg_val_loss = val_loss / len(val_loader)
+        val_time     = time.time() - v0
+
+        # —— 分割 mIoU 评估 —— #
         seg_eval = SegmentationEvaluator(num_classes=2)
-        for pm, gt in zip(all_pred_masks, all_gt_masks):
-            pm_t = torch.from_numpy(pm).unsqueeze(0).unsqueeze(0)
-            gt_t = torch.from_numpy(gt).unsqueeze(0).unsqueeze(0)
+        for pm_arr, gt_arr in zip(all_pred_masks, all_gt_masks):
+            pm_t = torch.from_numpy(pm_arr).unsqueeze(0).unsqueeze(0)
+            gt_t = torch.from_numpy(gt_arr).unsqueeze(0).unsqueeze(0)
             seg_eval.update(pm_t, gt_t)
         seg_iou = seg_eval.compute_miou()
 
-        # 关键点 AP 评估
+        # —— 关键点 AP 评估 —— #
         pose_eval = PoseEvaluator(ann_file, COCO_KEYPOINT_NAMES)
         batch_preds = []
         for img_id, hm_arr in enumerate(all_heatmaps):
-            # hm_arr: numpy array shape (C, H, W)
-            # 使用 numpy.ndarray.max，保持为 ndarray，使其支持 .mean()
-            scores = hm_arr.max(axis=(1,2))  # numpy array of shape (C,)
+            # numpy array shape (C, H, W)
+            scores = hm_arr.max(axis=(1,2))  # ndarray, supports .mean()
             batch_preds.append((img_id, hm_arr, scores))
         pose_eval.update(batch_preds, None)
         kp_acc = pose_eval.compute_ap()
 
         # —— 保存最佳模型 —— #
-        # …（保存逻辑保持不变）…
+        if kp_acc > best_ap:
+            best_ap = kp_acc
+            best_path = os.path.join(args.output_dir, "best_model.pth")
+            torch.save(model.state_dict(), best_path)
 
-        # —— WandB Epoch 日志 —— #
-        # …（logging 保持不变）…
+            artifact = wandb.Artifact(
+                name=f"best-keypoint-model",
+                type="model",
+                description=f"Epoch {epoch}, kp_acc={best_ap:.4f}"
+            )
+            artifact.add_file(best_path)
+            artifact.metadata = {"epoch": epoch, "seg_iou": seg_iou, "kp_acc": kp_acc}
+            wandb.log_artifact(artifact, aliases=["best-keypoint"])
+            wandb.run.summary["best_kp_acc"] = best_ap
 
+        # —— Epoch 级 WandB 日志 —— #
+        wandb.log({
+            'train/avg_loss':   avg_train_loss,
+            'val/avg_loss':     avg_val_loss,
+            'train/epoch_time': train_time,
+            'val/epoch_time':   val_time,
+            'val/seg_iou':      seg_iou,
+            'val/kp_accuracy':  kp_acc,
+            **{
+                f"model/{n.replace('.', '/')}_hist": wandb.Histogram(p.detach().cpu().numpy())
+                for n, p in model.named_parameters()
+            }
+        }, step=epoch)
+
+        # 样本可视化
+        log_samples(
+            sample_seg_gts, sample_seg_preds,
+            sample_pose_gts, sample_pose_preds,
+            orig_sizes, epoch
+        )
+
+        # EarlyStopping
         if early_stop(avg_val_loss, model):
             print("Early stopping triggered")
             break
@@ -155,6 +279,7 @@ def train(args):
     os.makedirs(args.output_dir, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pth"))
     destroy_process_group()
+
 
 
 
