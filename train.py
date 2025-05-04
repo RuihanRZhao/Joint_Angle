@@ -282,37 +282,22 @@ def run_one_epoch(model: nn.Module,
         if is_train and scaler is not None:
             autocast_ctx = torch.amp.autocast(device_type='cuda')
         else:
-            autocast_ctx = torch.no_grad() if not is_train else (lambda: (_ for _ in ()).throw)
-
-        with autocast_ctx:
-            s_seg, s_hm, s_paf, *_ = model(imgs)
-
-        # 组织参数并调用 compute_loss
-        student_out = (s_seg, s_hm, s_paf)
-        gt_data     = (masks, hm_lbl, paf_lbl)
-
-        if teacher is not None:
-            teacher_out = (t_seg, t_hm, t_paf)
-            loss, met = compute_loss(
-                student_out,
-                gt_data,
-                teacher_outputs=teacher_out,
-                use_distillation=True,
-                distill_kwargs={
-                    "alpha": args.alpha,
-                    "beta":  args.beta,
-                    "gamma": args.gamma
-                }
-            )
+            autocast_ctx = torch.no_grad() if not is_train else (lambda: s_seg, s_hm, s_paf, s_multi = model(imgs)th autocast_          s_seg, s_hm if teacher is None:
+            loss_seg = losses['seg'](s_seg, masks)
+            loss_hm = losses['hm'](s_hm, hm_lbl)
+            loss_paf = losses['paf'](s_paf, paf_lbl)
+            loss = loss_seg + loss_hm + loss_paf
+            loss_dist = torch.tensor(0.0, device=device)
         else:
-            loss, met = compute_loss(
-                student_out,
-                gt_data,
-                use_distillation=False,
-                mtl_kwargs={
-                    "weight_seg": args.w_seg,
-                    "weight_hm":  args.w_hm,
-                    "weight_paf": args.w_paf,
+            loss, met = losses['distill'](
+                (s_seg, s_hm, s_paf),
+                (t_seg.detach(), t_hm.detach(), t_paf.detach()),
+                (masks, gt_kps, gt_vis)
+            )
+            loss_seg = met['seg_loss']
+            loss_hm = met['hm_loss']
+            loss_paf = met['paf_loss']
+            loss_dist = met['distill_loss']paf,
                     "pos_weight": args.pos_weight_tensor
                 }
             )
