@@ -159,6 +159,9 @@ def prepare_coco_dataset(root_dir,
     if os.path.isfile(cache_file) and not force_reload:
         with open(cache_file, 'rb') as fp:
             samples = pickle.load(fp)
+        # 如果指定了 max_samples，则裁剪缓存数据
+        if max_samples is not None:
+            samples = samples[:max_samples]
         return samples
 
     # ———— 4. 解析 COCO 注释 ————
@@ -224,22 +227,24 @@ def prepare_coco_dataset(root_dir,
     with open(cache_file, 'wb') as fp:
         pickle.dump(samples, fp, protocol=pickle.HIGHEST_PROTOCOL)
 
-    return samples
+    print(f"[prepare_coco_dataset] split={split}, loaded {len(samples)} samples (max_samples={max_samples})")
 
+    return samples
 
 class COCODataset(Dataset):
     """
     PyTorch Dataset for COCO 样本，带固定大小变换，兼容 UNet。
+    Outputs keypoints reshaped to [P, K, 2] and visibilities [P, K].
     """
 
     def __init__(self, samples, img_transform=None, mask_transform=None):
         self.samples = samples
         self.img_transform = img_transform or transforms.Compose([
-            transforms.Resize((256, 256)),
+            transforms.Resize((480, 480)),
             transforms.ToTensor(),
         ])
         self.mask_transform = mask_transform or transforms.Compose([
-            transforms.Resize((256, 256)),
+            transforms.Resize((480, 480)),
             transforms.ToTensor(),
         ])
 
@@ -248,44 +253,72 @@ class COCODataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.samples[idx]
+        # 1. 读取 & 变换图像
         img = Image.open(item['image_path']).convert('RGB')
         img_tensor = self.img_transform(img)
 
+        # 2. 读取 & 二值化 mask
         mask_np = item['mask']
         mask_img = Image.fromarray((mask_np * 255).astype(np.uint8))
         mask_tensor = self.mask_transform(mask_img)
         mask_tensor = (mask_tensor > 0.5).float()
 
+        # 3. 原始扁平 keypoints (M,2) 和 visibility (M,)
         kps = item.get('keypoints', None)
         vis = item.get('visibility', None)
 
+        # 4. 如果没有任何 keypoints，则返回空张量
         if kps is None or (isinstance(kps, np.ndarray) and kps.size == 0):
-            # no keypoints
-            kps_resized = torch.zeros((0, 2), dtype=torch.float32)
-            kps_orig    = torch.zeros((0, 2), dtype=torch.float32)
-            vis_tensor  = torch.zeros((0,), dtype=torch.int32)
-        else:
-            # absolute original coords
-            orig_coords = kps.astype(np.float32).copy()
-            # resized coords for model input (256x256)
-            resized = orig_coords.copy()
-            resized[:, 0] = orig_coords[:, 0] / mask_np.shape[1] * 256
-            resized[:, 1] = orig_coords[:, 1] / mask_np.shape[0] * 256
-            kps_resized = torch.from_numpy(resized)
-            kps_orig    = torch.from_numpy(orig_coords)
-            vis_tensor  = torch.from_numpy(vis.astype(np.int32))
+            kps_all = torch.zeros((0, 17, 2), dtype=torch.float32)
+            vis_all = torch.zeros((0, 17), dtype=torch.int32)
+            kps_orig_all = torch.zeros((0, 17, 2), dtype=torch.float32)
+            return img_tensor, mask_tensor, kps_all, vis_all, item['image_path'], kps_orig_all
 
-        return img_tensor, mask_tensor, kps_resized, vis_tensor, item['image_path'], kps_orig
+        # 5. 有 keypoints 的情况
+        # 5.1 原始坐标 [M,2]
+        orig_coords = kps.astype(np.float32).copy()
+        M = orig_coords.shape[0]
+        K = 17
+        if M % K != 0:
+            raise ValueError(f"Keypoints count {M} not divisible by {K}")
+        P = M // K
+
+        # 5.2 构建 kps_orig_all: [P,17,2]
+        kps_orig_all = torch.from_numpy(orig_coords).view(P, K, 2)
+
+        # 5.3 归一并 resize 到 256×256
+        resized = orig_coords.copy()
+        resized[:, 0] = orig_coords[:, 0] / mask_np.shape[1] * 256
+        resized[:, 1] = orig_coords[:, 1] / mask_np.shape[0] * 256
+        kps_resized_flat = torch.from_numpy(resized)  # [M,2]
+        vis_flat = torch.from_numpy(vis.astype(np.int32))  # [M]
+
+        # 5.4 重塑为 [P,17,2] 和 [P,17]
+        kps_all = kps_resized_flat.view(P, K, 2)
+        vis_all = vis_flat.view(P, K)
+
+        return img_tensor, mask_tensor, kps_all, vis_all, item['image_path'], kps_orig_all
 
 
 def collate_fn(batch):
-    imgs = torch.stack([x[0] for x in batch])
-    masks = torch.stack([x[1] for x in batch])
-    keypoints = [x[2] for x in batch]
-    visibilities = [x[3] for x in batch]
-    paths = [x[4] for x in batch]
-    keypoints_orig = [x[5] for x in batch]
-    return imgs, masks, keypoints, visibilities, paths, keypoints_orig
+    """
+    Custom collate to keep per-sample P_i variable.
+    Returns:
+      imgs:           Tensor, [B,3,256,256]
+      masks:          Tensor, [B,1,256,256]
+      keypoints_list: list of Tensors [P_i,17,2]
+      visibilities_list: list of Tensors [P_i,17]
+      paths:          list of str
+      kps_orig_list:  list of Tensors [P_i,17,2]
+    """
+    imgs              = torch.stack([x[0] for x in batch], dim=0)
+    masks             = torch.stack([x[1] for x in batch], dim=0)
+    keypoints_list    = [x[2] for x in batch]
+    visibilities_list = [x[3] for x in batch]
+    paths             = [x[4] for x in batch]
+    kps_orig_list     = [x[5] for x in batch]
+    return imgs, masks, keypoints_list, visibilities_list, paths, kps_orig_list
+
 
 
 if __name__ == '__main__':

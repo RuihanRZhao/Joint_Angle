@@ -1,11 +1,4 @@
 # 指定 PyTorch nightly CUDA 12.8 源
---index-url https://download.pytorch.org/whl/cu128
---extra-index-url https://pypi.org/simple
-
-# PyTorch 及生态
-torch
-torchvision    # 常用模型与 transforms
-torchaudio
 
 # 图像处理
 pillow         # 图像读写

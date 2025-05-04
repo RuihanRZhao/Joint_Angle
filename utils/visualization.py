@@ -1,7 +1,7 @@
 import cv2
 import os
 import numpy as np
-
+from PIL import Image, ImageDraw
 
 def visualize_raw_samples(samples, save_dir):
     """
@@ -90,3 +90,30 @@ def visualize_predictions(predictions, save_dir):
         # 保存可视化结果
         filename = os.path.basename(pred["image_path"])
         cv2.imwrite(os.path.join(save_dir, filename), overlay.astype(np.uint8))
+
+
+COCO_SKELETON = [
+    (0,1),(0,2),(1,3),(2,4),(5,6),(5,7),(7,9),
+    (6,8),(8,10),(11,12),(5,11),(6,12),(11,13),
+    (13,15),(12,14),(14,16)
+]
+
+def draw_keypoints_linked(img_arr, kps, vis):
+    """
+    Draw keypoints and skeleton on image.
+    img_arr: H×W×3 numpy img
+    kps: [K,2] pixel coords
+    vis: [K] visibility flags
+    """
+    vis_img = Image.fromarray(img_arr).convert('RGBA')
+    draw = ImageDraw.Draw(vis_img)
+    # points
+    for (x,y), v in zip(kps, vis):
+        if v > 0:
+            draw.ellipse((x-3,y-3,x+3,y+3), fill=(255,0,0,180))
+    # skeleton
+    for i,j in COCO_SKELETON:
+        if vis[i] > 0 and vis[j] > 0:
+            x1,y1 = kps[i]; x2,y2 = kps[j]
+            draw.line((x1,y1,x2,y2), fill=(0,255,0,180), width=2)
+    return np.array(vis_img.convert('RGB'))

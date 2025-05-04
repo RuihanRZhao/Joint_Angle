@@ -1,121 +1,112 @@
+# optimized_seg_pose_mbv2.py
+# Using MobileNetV2 backbone for lightweight segmentation + PFLD for pose, sharing backbone for efficiency
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import models
+from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 
-
-class StudentModel(nn.Module):
-    """学生模型：轻量级特征提取 + 分割结果辅助姿态估计"""
-
-    def __init__(self, num_keypoints: int, seg_channels: int = 1,
-                 width_mult: float = 1.0, pretrained_backbone: bool = True):
-        super(StudentModel, self).__init__()
-        # 1. Backbone：MobileNetV3 Large
-        backbone_model = models.mobilenet_v3_large(
-            weights=models.MobileNet_V3_Large_Weights.IMAGENET1K_V1
-            if pretrained_backbone else None,
+# -----------------------------------
+# MobileNetV2-based Segmentation
+# -----------------------------------
+class MobileNetV2Seg(nn.Module):
+    def __init__(self, num_classes=1, width_mult=1.0, pretrained_backbone=True):
+        super().__init__()
+        # Backbone: MobileNetV2
+        mb2 = mobilenet_v2(
+            weights=MobileNet_V2_Weights.IMAGENET1K_V1 if pretrained_backbone else None,
             width_mult=width_mult
         )
-        # 只保留 features 部分
-        self.backbone = backbone_model.features
-
-        # 动态获取最后一层特征图的通道数
-        high_channels = backbone_model.features[-1].out_channels
-
-        # 2. 跳跃连接索引（取 1/8 & 1/16 分辨率特征）
-        self.skip_index_1 = 6
-        self.skip_index_2 = 12
-
-        # 3. 特征降维：low / mid / high
-        #    low-level 特征（通道数 backbone.features[6].out_channels）
-        self.conv_reduce_low = nn.Sequential(
-            nn.Conv2d(backbone_model.features[self.skip_index_1].out_channels, 64, kernel_size=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
-        #    mid-level 特征（通道数 backbone.features[12].out_channels）
-        self.conv_reduce_mid = nn.Sequential(
-            nn.Conv2d(backbone_model.features[self.skip_index_2].out_channels, 64, kernel_size=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
-        #    high-level 特征（动态读取到的 high_channels）
-        self.conv_reduce_high = nn.Sequential(
-            nn.Conv2d(high_channels, 64, kernel_size=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
+        self.features = mb2.features  # feature extractor
+        in_ch = mb2.last_channel     # typically 1280 * width_mult
+        # Segmentation head: simple decoder
+        self.decoder = nn.Sequential(
+            nn.Conv2d(in_ch, in_ch // 2, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(in_ch // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_ch // 2, num_classes, kernel_size=1)
         )
 
-        # 4. 融合卷积
-        self.conv_fuse_mid = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
+    def forward(self, x):
+        feats = self.features(x)           # [B, C, H/32, W/32]
+        up = F.interpolate(feats, scale_factor=32, mode='bilinear', align_corners=False)
+        seg_logits = self.decoder(up)      # [B,1,H,W]
+        return seg_logits
+
+# -----------------------------------
+# PFLD Pose Estimation (Fixed)
+# -----------------------------------
+class ConvBNReLU(nn.Module):
+    def __init__(self, in_ch, out_ch, k, s=1, p=0):
+        super().__init__()
+        self.conv = nn.Conv2d(in_ch, out_ch, k, s, p, bias=False)
+        self.bn = nn.BatchNorm2d(out_ch)
+        self.act = nn.ReLU(inplace=True)
+    def forward(self, x): return self.act(self.bn(self.conv(x)))
+
+class DepthwiseSeparable(nn.Module):
+    def __init__(self, in_ch, out_ch, stride=1):
+        super().__init__()
+        self.dw = nn.Conv2d(in_ch, in_ch, 3, stride, 1, groups=in_ch, bias=False)
+        self.dw_bn = nn.BatchNorm2d(in_ch)
+        self.pw = nn.Conv2d(in_ch, out_ch, 1, 1, 0, bias=False)
+        self.pw_bn = nn.BatchNorm2d(out_ch)
+        self.act = nn.ReLU(inplace=True)
+    def forward(self, x):
+        x = self.act(self.dw_bn(self.dw(x)))
+        x = self.act(self.pw_bn(self.pw(x)))
+        return x
+
+class PFLD(nn.Module):
+    def __init__(self, num_keypoints=17, width_mult=1.0):
+        super().__init__()
+        base_ch = int(64 * width_mult)
+        self.conv1 = ConvBNReLU(3, base_ch, 3, 2, 1)
+        self.conv2 = DepthwiseSeparable(base_ch, base_ch * 2, 2)
+        self.conv3 = DepthwiseSeparable(base_ch * 2, base_ch * 4, 2)
+        self.conv4 = DepthwiseSeparable(base_ch * 4, base_ch * 4, 1)
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Linear(base_ch * 4, num_keypoints * 2)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.avgpool(x).view(x.size(0), -1)
+        out = self.fc(x)
+        coords = out.view(-1, out.size(1) // 2, 2)
+        return coords
+
+# -----------------------------------
+# Shared Backbone Multi-Task Model
+# -----------------------------------
+class StudentModel(nn.Module):
+    def __init__(self, seg_width_mult=1.0, pose_width_mult=1.0):
+        super().__init__()
+        mb2 = mobilenet_v2(
+            weights=MobileNet_V2_Weights.IMAGENET1K_V1,
+            width_mult=seg_width_mult
         )
-        self.conv_fuse_low = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
+        self.features = mb2.features
+        feat_ch = mb2.last_channel
+        # Seg head
+        self.seg_head = nn.Sequential(
+            nn.Conv2d(feat_ch, feat_ch // 2, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(feat_ch // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(feat_ch // 2, 1, 1)
         )
+        # Pose head (PFLD)
+        self.pose_net = PFLD(num_keypoints=17, width_mult=pose_width_mult)
 
-        # 5. 分割输出头
-        self.seg_head = nn.Conv2d(64, seg_channels, kernel_size=1)
-
-        # 6. 分割结果 + 特征融合，用于姿态分支
-        #    输入通道 = 64（特征） + seg_channels（概率图）
-        self.seg_to_pose_conv = nn.Sequential(
-            nn.Conv2d(64 + seg_channels, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
-        # 姿态输出头
-        self.pose_head = nn.Conv2d(64, num_keypoints, kernel_size=1)
-
-    def forward(self, x: torch.Tensor, return_features: bool = False):
-        B, C, H, W = x.shape
-
-        # 1. Backbone 前向，记录 multi-scale 特征
-        feat_low = feat_mid = feat_high = None
-        out = x
-        for idx, layer in enumerate(self.backbone):
-            out = layer(out)
-            if idx == self.skip_index_1:
-                feat_low = out
-            if idx == self.skip_index_2:
-                feat_mid = out
-        feat_high = out  # 最后一层输出
-
-        # 2. 降维
-        low = self.conv_reduce_low(feat_low)
-        mid = self.conv_reduce_mid(feat_mid)
-        high = self.conv_reduce_high(feat_high)
-
-        # 3. 高→中，上采样+融合
-        high_up = F.interpolate(high, size=mid.shape[2:], mode='bilinear', align_corners=False)
-        mid_fused = self.conv_fuse_mid(high_up + mid)
-
-        # 4. 中→低，上采样+融合
-        mid_up = F.interpolate(mid_fused, size=low.shape[2:], mode='bilinear', align_corners=False)
-        low_fused = self.conv_fuse_low(mid_up + low)
-
-        # 5. 分割预测
-        seg_logits_small = self.seg_head(low_fused)
-        seg_logits = F.interpolate(seg_logits_small, size=(H, W), mode='bilinear', align_corners=False)
-
-        # 6. 分割概率用于姿态
-        seg_probs_small = torch.sigmoid(seg_logits_small)
-
-        # 7. 准备姿态特征：上采样到更高分辨率
-        pose_feat = F.interpolate(low_fused, scale_factor=2.0, mode='bilinear', align_corners=False)
-        seg_up = F.interpolate(seg_probs_small, size=pose_feat.shape[2:], mode='bilinear', align_corners=False)
-
-        # 8. 融合分割概率与特征，并生成姿态特征
-        combined = torch.cat([pose_feat, seg_up], dim=1)
-        pose_feat_refined = self.seg_to_pose_conv(combined)
-
-        # 9. 姿态预测
-        pose_logits = self.pose_head(pose_feat_refined)
-
-        if return_features:
-            return seg_logits, pose_logits, low_fused, pose_feat_refined
-        return seg_logits, pose_logits
+    def forward(self, x):
+        feats = self.features(x)
+        # Segmentation
+        seg_up = F.interpolate(feats, scale_factor=32, mode='bilinear', align_corners=False)
+        seg_logits = self.seg_head(seg_up)
+        # Pose input: combine image and seg prob
+        seg_prob = torch.sigmoid(seg_logits)
+        pose_input = torch.cat([x, seg_prob], dim=1)
+        keypoints = self.pose_net(pose_input)
+        return seg_logits, keypoints

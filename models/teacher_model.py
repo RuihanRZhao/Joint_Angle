@@ -10,28 +10,23 @@ from models.pose_model import PoseEstimationModel
 
 
 class TeacherModel(nn.Module):
-    def __init__(self):
+    def __init__(self, num_keypoints: int = 17, num_pafs: int = 32):
         super().__init__()
-        # 分割分支
-        self.segmentation = UNetSegmentation()
-        # 获取分割输出的通道数（num_classes）
+        # 分割分支，输出单通道人物语义分割 logits
+        self.segmentation = UNetSegmentation(in_channels=3, num_classes=1)
         seg_out_channels = self.segmentation.conv_last.out_channels
-        # 姿态分支：输入 = RGB 图 + 分割 logits
-        self.pose = PoseEstimationModel(in_channels = 3 + seg_out_channels)
+        # 多人体姿态估计分支，输入通道 = RGB(3) + seg_logits(1)
+        self.pose = PoseEstimationModel(in_channels=3 + seg_out_channels,
+                                        num_keypoints=num_keypoints,
+                                        num_pafs=num_pafs)
 
-    def forward(self, x: torch.Tensor) -> (torch.Tensor, torch.Tensor):
-        """
-        Forward pass: compute segmentation and pose.
-        Returns a tuple (segmentation_logits, pose_heatmaps).
-        """
-        seg_logits = self.segmentation(x)  # shape: [B, C, H, W]
-        # Convert seg_logits to probabilities (optional softmax) or use raw logits.
-        # Here we use raw logits and allow pose network to learn from them.
-        # Concatenate image and segmentation along channel dimension
-        # If seg_logits has same HxW as x; ensure sizes match
-        # If needed, upsample seg_logits to x.size() (assumed already same here).
-        # Detach segmentation output so pose gradients don't flow back into seg branch during forward.
+    def forward(self, x: torch.Tensor):
+        # 语义分割
+        seg_logits = self.segmentation(x)         # [B, 1, H, W]
+        # 阻断梯度流向分割分支
         seg_for_pose = seg_logits.detach()
-        x_pose = torch.cat([x, seg_for_pose], dim=1)  # new channels = 3 + seg_channels
-        pose_heatmaps = self.pose(x_pose)
-        return seg_logits, pose_heatmaps
+        # 拼接输入
+        x_pose = torch.cat([x, seg_for_pose], dim=1)  # [B, 4, H, W]
+        # 多人体姿态输出
+        heatmaps, pafs = self.pose(x_pose)
+        return seg_logits, heatmaps, pafs
