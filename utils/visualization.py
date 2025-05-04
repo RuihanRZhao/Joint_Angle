@@ -11,16 +11,36 @@ SKELETON = [
 ]
 
 
-def overlay_mask(image, mask, alpha=0.5, color=(0,255,0)):
+def overlay_mask(image: np.ndarray, mask: np.ndarray, alpha: float = 0.6) -> np.ndarray:
     """
-    将二值 mask 叠加到 image 上。
-    image: BGR uint8 HxWx3
-    mask:  [H, W] 0/1 uint8 or bool
+    在 RGB 图像上叠加二值分割 mask。
+
+    Args:
+      - image: 原始 RGB 图像，shape=(H, W, 3), dtype=uint8 或 float
+      - mask:  单通道 mask，shape=(h, w)，值为0-1或0-255
+      - alpha: 叠加权重
+
+    Returns:
+      - overlay_rgb: 叠加后的 RGB 图像，shape=(H, W, 3)
     """
-    m = (mask > 0).astype(np.uint8) * 255
-    m_bgr = cv2.cvtColor(m, cv2.COLOR_GRAY2BGR)
-    overlay = cv2.addWeighted(image, 1-alpha, m_bgr, alpha, 0)
-    return overlay
+    H, W = image.shape[:2]
+
+    # 1) 标准化 mask 到 [0,255] uint8
+    m = mask.copy()
+    if m.dtype != np.uint8:
+        m = (m * 255).astype(np.uint8)
+    # 2) resize 到原图大小
+    m_resized = cv2.resize(m, (W, H), interpolation=cv2.INTER_NEAREST)
+    # 3) 上色：BGR 红色
+    m_bgr = np.zeros((H, W, 3), dtype=np.uint8)
+    m_bgr[:, :, 2] = m_resized  # 红色通道
+    # 4) 转为 BGR 原图
+    img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR) if image.ndim == 3 else image
+    # 5) 叠加
+    overlay_bgr = cv2.addWeighted(img_bgr, 1 - alpha, m_bgr, alpha, 0)
+    # 6) 转回 RGB
+    overlay_rgb = cv2.cvtColor(overlay_bgr, cv2.COLOR_BGR2RGB)
+    return overlay_rgb
 
 
 def draw_heatmap(image: np.ndarray, heatmap: np.ndarray, alpha: float = 0.6) -> np.ndarray:
