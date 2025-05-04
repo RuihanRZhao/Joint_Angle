@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument('--output_dir', default='run', help='输出文件目录')
     parser.add_argument('--teacher_epochs', type=int, default=3, help='教师模型训练轮数')
     parser.add_argument('--student_epochs', type=int, default=3, help='学生蒸馏训练轮数')
-    parser.add_argument('--batch_size', type=int, default=8, help='训练批大小')
+    parser.add_argument('--batch_size', type=int, default=4, help='训练批大小')
     parser.add_argument('--lr', type=float, default=1e-4, help='初始学习率')
     # scheduler params
     parser.add_argument('--scheduler', choices=['plateau', 'cosine'], default='plateau', help='学习率调度策略')
@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument('--patience', type=int, default=7, help='EarlyStopping 耐心值（轮）')
     parser.add_argument('--warmup_epochs', type=int, default=5, help='线性 warmup 的 epoch 数')
     parser.add_argument('--val_viz_num', type=int, default=3, help='每轮上传至 WandB 的验证样本数量')
-    parser.add_argument('--num_workers', type=int, default=8, help='DataLoader 并行 worker 数量')
+    parser.add_argument('--num_workers', type=int, default=1, help='DataLoader 并行 worker 数量')
     # debug
     parser.add_argument('--max_samples', type=int, default=10, help='最大加载样本数（快速验证）')
     # distributed
@@ -56,6 +56,9 @@ def parse_args():
     parser.add_argument('--entity', default='joint_angle', help='WandB 实体名（用户名或团队）')
 
     parser.add_argument('--device', default=('cuda' if torch.cuda.is_available() else 'cpu'), help='运行设备')
+
+    parser.add_argument('--project_name', default='', help='Project名字后缀')
+
     return parser.parse_args()
 
 
@@ -106,6 +109,8 @@ def parse_args_r():
     parser.add_argument('--entity', default='joint_angle', help='WandB 实体名（用户名或团队）')
     parser.add_argument('--device', default=('cuda' if torch.cuda.is_available() else 'cpu'),
                         help='运行设备')
+
+    parser.add_argument('--project_name', default='_model', help='Project名字后缀')
 
     return parser.parse_args()
 
@@ -338,7 +343,7 @@ if __name__ == '__main__':
     dist_fn = DistillationLoss()  # 负责蒸馏三项的综合
 
     # WandB Logger for Teacher
-    logger_t = WandbLogger("Teacher", args.entity, config=vars(args))
+    logger_t = WandbLogger(f"Teacher{args.project_name}", args.entity, config=vars(args))
     try:
         best_pck = 0.0
         best_t = teacher.state_dict()
@@ -392,13 +397,15 @@ if __name__ == '__main__':
                     best_pck = val_pck
                     best_t = teacher.state_dict()
 
+            torch.cuda.empty_cache()
+
         torch.save(best_t, os.path.join(args.output_dir, 'models', 'teacher.pth'))
         logger_t.finish()
 
         # ===== Student Distillation =====
         teacher.load_state_dict(best_t)
         teacher.eval()
-        logger_s = WandbLogger("Student", args.entity, config=vars(args))
+        logger_s = WandbLogger(f"Student{args.project_name}", args.entity, config=vars(args))
         best_pck = 0.0
         best_s = student.state_dict()
 
@@ -453,6 +460,8 @@ if __name__ == '__main__':
             if val_pck > best_pck:
                     best_pck = val_pck
                     best_t = student.state_dict()
+
+            torch.cuda.empty_cache()
 
         torch.save(best_s, os.path.join(args.output_dir, 'models', 'student.pth'))
         logger_s.finish()
