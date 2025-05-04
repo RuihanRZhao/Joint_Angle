@@ -171,82 +171,56 @@ class SegmentKeypointModel(nn.Module):
         backbone = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.DEFAULT)
         self.features = backbone.features
 
-        # 结构优化
-        self._modify_bottlenecks()
-        self._replace_attention()
+        # 选取合适的层索引
+        self.out_indices = [3, 6, 13]  # 以实际网络结构为准
 
-        # 动态计算分割头输入通道：取 backbone 在 forward 里拼接的那些层的 out_channels 之和
-        seg_in_chs = [
-            self.features[i].block[-1].out_channels
-            for i in (3, 6, 9)
-        ]
-        seg_in = sum(seg_in_chs)
+        # 获取每层输出通道
+        self.out_channels = [self.features[i].out_channels for i in self.out_indices]
+        in_channels = sum(self.out_channels)
+
+        # 对齐通道
+        self.fuse_conv = nn.Sequential(
+            nn.Conv2d(in_channels, 256, 1),
+            nn.BatchNorm2d(256),
+            nn.ReLU()
+        )
 
         # 分割头
         self.seg_head = nn.Sequential(
-            nn.Conv2d(seg_in, 64, 3, padding=1),
+            nn.Conv2d(256, 64, 3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.Conv2d(64, 1, 1)
         )
 
-        # 动态计算姿态头输入通道（若与分割头相同，也可复用 seg_in）
-        pose_in_chs = seg_in_chs
-        pose_in = sum(pose_in_chs)
-
         # 姿态头
         self.pose_head = nn.Sequential(
-            nn.Conv2d(pose_in, 256, 3, padding=1),
+            nn.Conv2d(256, 256, 3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 17, 1)
+            nn.Conv2d(256, 17, 1)  # 17个关键点
         )
 
-        self.postprocessor = PosePostProcessor()
-
-    def _modify_bottlenecks(self):
-        # 替换前3个瓶颈块为RepGhost
-        for i in [3, 6, 9]:
-            block = self.features[i].block
-            # block[0] 是 Conv2dNormActivation，它的第一个子模块才是 Conv2d
-            conv0 = block[0][0]
-            inp = conv0.in_channels
-            hidden = block[0].out_channels
-            oup = block[-1].out_channels
-
-            new_bottleneck = RepGhostBottleneck(inp, hidden, oup)
-            self.features[i].block[0] = new_bottleneck
-
-    def _replace_attention(self):
-        # 替换SE模块为CoordinateAttention
-        for i in [1, 4, 7, 10, 13, 16]:
-            if hasattr(self.features[i], 'attention'):
-                in_ch = self.features[i].attention.se[1].in_channels
-                self.features[i].attention = CoordinateAttention(in_ch)
+        self.postprocessor = PosePostProcessor()  # 你自己的后处理
 
     def forward(self, x):
-        # 特征提取
-        features = self.features(x)
+        feats = []
+        out = x
+        for i, layer in enumerate(self.features):
+            out = layer(out)
+            if i in self.out_indices:
+                feats.append(out)
+        # 上采样到最大空间分辨率
+        target_size = feats[0].shape[2:]
+        feats = [F.interpolate(f, size=target_size, mode='bilinear', align_corners=True) if f.shape[2:] != target_size else f for f in feats]
+        fused = torch.cat(feats, dim=1)
+        fused = self.fuse_conv(fused)
 
-        # 分割输出
-        seg_logits = F.interpolate(
-            self.seg_head(features),
-            scale_factor=32,
-            mode='bilinear',
-            align_corners=True
-        )
+        seg_logits = self.seg_head(fused)
+        heatmaps = self.pose_head(fused)
 
-        # 姿态热图
-        heatmaps = F.interpolate(
-            self.pose_head(features),
-            scale_factor=32,
-            mode='bilinear',
-            align_corners=True
-        )
-
-        # 关键点解码
+        # 后处理得到multi_kps
         multi_kps = self.postprocessor(heatmaps)
-
         return seg_logits, multi_kps
 
 
