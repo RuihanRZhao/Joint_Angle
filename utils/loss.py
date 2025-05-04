@@ -1,114 +1,156 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from typing import Tuple, List
+from torch import Tensor
 
 class SegmentationLoss(nn.Module):
+    """
+    Binary segmentation loss using BCEWithLogits.
+    """
+    def __init__(self, pos_weight=None):
+        super().__init__()
+        self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    def forward(self, pred_logits: torch.Tensor, gt_mask: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred_logits: [B,1,H,W] raw logits
+            gt_mask:     [B,1,H,W] binary mask (0 or 1)
+        """
+        return self.bce(pred_logits, gt_mask)
+
+
+class HeatmapLoss(nn.Module):
+    """
+    Heatmap loss for keypoint confidence maps using MSE.
+    """
     def __init__(self):
-        super(SegmentationLoss, self).__init__()
-        self.bce_loss = nn.BCEWithLogitsLoss()
+        super().__init__()
+        self.mse = nn.MSELoss()
 
-    def forward(self, pred, target):
-        # 如果 target 只有 H×W，没有通道维度，就加上一个单通道维度
-        # pred: [N, C, H, W], target: [N, H, W] 或 [N, 1, H, W]
-        if target.dim() == pred.dim() - 1:
-            target = target.unsqueeze(1)
-        return self.bce_loss(pred, target)
+    def forward(self, pred_hm: torch.Tensor, gt_hm: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred_hm: [B,K,h,w] raw heatmaps logits
+            gt_hm:   [B,K,h,w] target heatmaps (0-1 floats)
+        """
+        # apply sigmoid to logits
+        pred_prob = torch.sigmoid(pred_hm)
+        return self.mse(pred_prob, gt_hm)
 
 
-class KeypointsLoss(nn.Module):
+class PAFLoss(nn.Module):
     """
-    Multi-person keypoint MSE loss.
-    pred_heatmaps: [B, K, H, W]
-    keypoints_list: list of length B, each is tensor [P_i, K, 2] of normalized coords
-    visibilities_list: list of length B, each is tensor [P_i, K] of visibility flags
+    Part Affinity Field loss using MSE.
     """
-    def __init__(self, sigma=3):
-        super(KeypointsLoss, self).__init__()
-        self.sigma = sigma
+    def __init__(self):
+        super().__init__()
+        self.mse = nn.MSELoss()
 
-    def forward(self, pred_heatmaps, keypoints_list, visibilities_list):
-        total_loss = 0.0
-        batch_size, K, H, W = pred_heatmaps.shape
-        device = pred_heatmaps.device
-        # build grid for gaussian computation
-        grid_x, grid_y = torch.meshgrid(
-            torch.arange(W, device=device),
-            torch.arange(H, device=device),
-            indexing='ij'
-        )
+    def forward(self, pred_paf: torch.Tensor, gt_paf: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred_paf: [B,2L,h,w] raw PAF logits
+            gt_paf:   [B,2L,h,w] target PAF vectors
+        """
+        return self.mse(pred_paf, gt_paf)
 
-        for i in range(batch_size):
-            heatmap = pred_heatmaps[i]  # [K, H, W]
-            kps_batch = keypoints_list[i]  # [P, K, 2]
-            vis_batch = visibilities_list[i]  # [P, K]
-            target = torch.zeros_like(heatmap)
 
-            P = kps_batch.shape[0]
-            for p in range(P):
-                for k in range(K):
-                    if vis_batch[p, k] > 0:
-                        x_norm, y_norm = kps_batch[p, k]
-                        x = int(x_norm * (W - 1))
-                        y = int(y_norm * (H - 1))
-                        if 0 <= x < W and 0 <= y < H:
-                            dist = (grid_x - x) ** 2 + (grid_y - y) ** 2
-                            target[k] += torch.exp(-dist / (2 * self.sigma ** 2))
+class MultiTaskLoss(nn.Module):
+    """
+    Combine segmentation, heatmap, and PAF losses.
+    """
+    def __init__(self,
+                 weight_seg: float = 1.0,
+                 weight_hm:  float = 1.0,
+                 weight_paf: float = 1.0,
+                 pos_weight: torch.Tensor = None):
+        super().__init__()
+        self.seg_loss = SegmentationLoss(pos_weight=pos_weight)
+        self.hm_loss  = HeatmapLoss()
+        self.paf_loss = PAFLoss()
+        self.w_seg    = weight_seg
+        self.w_hm     = weight_hm
+        self.w_paf    = weight_paf
 
-            # compute MSE over all channels
-            loss = F.mse_loss(heatmap, target, reduction='sum')
-            total_vis = vis_batch.sum()
-            total_loss += loss / (total_vis + 1e-6)
+    def forward(self,
+                pred_seg: torch.Tensor,
+                gt_mask: torch.Tensor,
+                pred_hm: torch.Tensor,
+                gt_hm: torch.Tensor,
+                pred_paf: torch.Tensor,
+                gt_paf: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred_seg: logits [B,1,H,W]
+            gt_mask:  [B,1,H,W]
+            pred_hm:  [B,K,h,w]
+            gt_hm:    [B,K,h,w]
+            pred_paf: [B,2L,h,w]
+            gt_paf:   [B,2L,h,w]
 
-        return total_loss / batch_size
+        Returns:
+            total_loss, dict of individual losses
+        """
+        loss_seg = self.seg_loss(pred_seg, gt_mask)
+        loss_hm  = self.hm_loss(pred_hm, gt_hm)
+        loss_paf = self.paf_loss(pred_paf, gt_paf)
+        total = self.w_seg * loss_seg + self.w_hm * loss_hm + self.w_paf * loss_paf
+        return total, {"loss_seg": loss_seg, "loss_hm": loss_hm, "loss_paf": loss_paf}
 
 
 class DistillationLoss(nn.Module):
-    def __init__(self, alpha=0.5, temperature=2.0):
-        super(DistillationLoss, self).__init__()
-        self.alpha = alpha  # Balance between distill and task loss
-        self.temperature = temperature
-        self.kl_div = nn.KLDivLoss(reduction='batchmean')
-        self.seg_loss = SegmentationLoss()
-        self.keypoints_loss = KeypointsLoss()
+    """
+    蒸馏分割、Heatmap 和 PAF：
+      - seg_task:   学生分割对 GT 的 BCE Loss
+      - seg_dist:   学生分割对教师分割概率的 MSE Loss
+      - hm_dist:    学生 heatmap 对教师 heatmap 概率的 MSE Loss
+      - paf_dist:   学生 PAF 对教师 PAF 向量的 MSE Loss
+      总 loss = seg_task + λ_dist*(seg_dist + hm_dist + paf_dist)
+    """
+    def __init__(self, lambda_dist: float = 1.0):
+        super().__init__()
+        self.bce   = nn.BCEWithLogitsLoss()
+        self.mse   = nn.MSELoss()
+        self.lambda_dist = lambda_dist
 
-    def forward(self, student_outputs, teacher_outputs, targets):
-        # student_outputs: tuple(s_seg_logits, s_pose_logits)
-        # teacher_outputs: tuple(t_seg_logits, t_pose_logits)
-        # targets: tuple(mask, keypoints_list, visibilities_list)
+    def forward(self,
+                student_outputs: Tuple[Tensor,Tensor,Tensor],
+                teacher_outputs: Tuple[Tensor,Tensor,Tensor],
+                ground_truth: Tuple[Tensor,Tensor,List[Tensor]]):
+        # 拆包
+        s_seg, s_hm, s_paf = student_outputs
+        t_seg, t_hm, t_paf = teacher_outputs
+        gt_mask, _, _      = ground_truth
 
-        s_seg_logits, s_pose_logits = student_outputs
-        t_seg_logits, t_pose_logits = teacher_outputs
-        mask, keypoints_list, visibilities_list = targets
+        # 任务损失：分割对 GT
+        loss_seg = self.bce(s_seg, gt_mask)
 
-        # task loss on ground truth
-        task_seg_loss = self.seg_loss(s_seg_logits, mask)
-        task_pose_loss = self.keypoints_loss(s_pose_logits, keypoints_list, visibilities_list)
-        task_loss = task_seg_loss + task_pose_loss
+        # 蒸馏损失
+        # 分割概率 MSE
+        p_s = torch.sigmoid(s_seg)
+        p_t = torch.sigmoid(t_seg.detach())
+        loss_seg_dist = self.mse(p_s, p_t)
 
-        # distillation loss on teacher soft labels
-        s_seg_probs = F.log_softmax(s_seg_logits / self.temperature, dim=1)
-        t_seg_probs = F.softmax(t_seg_logits / self.temperature, dim=1)
-        seg_distill_loss = self.kl_div(s_seg_probs, t_seg_probs) * (self.temperature ** 2)
+        # heatmap 概率 MSE
+        hm_s = torch.sigmoid(s_hm)
+        hm_t = torch.sigmoid(t_hm.detach())
+        loss_hm_dist = self.mse(hm_s, hm_t)
 
-        # flatten pose heatmaps for KL
-        s_pose_probs = F.log_softmax(
-            s_pose_logits.view(s_pose_logits.size(0), -1) / self.temperature, dim=1
-        )
-        t_pose_probs = F.softmax(
-            t_pose_logits.view(t_pose_logits.size(0), -1) / self.temperature, dim=1
-        )
-        pose_distill_loss = self.kl_div(s_pose_probs, t_pose_probs) * (self.temperature ** 2)
+        # PAF 直接 MSE
+        loss_paf_dist = self.mse(s_paf, t_paf.detach())
 
-        distill_loss = seg_distill_loss + pose_distill_loss
+        # 合计
+        loss_distill = loss_seg_dist + loss_hm_dist + loss_paf_dist
+        total_loss = loss_seg + self.lambda_dist * loss_distill
 
-        # total = alpha * distill + (1-alpha) * task
-        total_loss = self.alpha * distill_loss + (1 - self.alpha) * task_loss
-
-        return total_loss, {
-            'total_loss': total_loss.detach().item(),
-            'task_seg_loss': task_seg_loss.detach().item(),
-            'task_pose_loss': task_pose_loss.detach().item(),
-            'seg_distill_loss': seg_distill_loss.detach().item(),
-            'pose_distill_loss': pose_distill_loss.detach().item()
+        # 输出 (loss, metrics)
+        metrics = {
+            "seg_loss":        loss_seg,
+            "seg_distill":     loss_seg_dist,
+            "hm_distill":      loss_hm_dist,
+            "paf_distill":     loss_paf_dist,
+            "distill_loss":    loss_distill
         }
+        return total_loss, metrics

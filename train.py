@@ -1,6 +1,6 @@
 import os
 import time
-import random
+import pprint
 import argparse
 import logging
 import numpy as np
@@ -9,17 +9,16 @@ import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
-
 import wandb
 from tqdm import tqdm, trange
 
 from models.teacher_model import TeacherModel
 from models.student_model import StudentModel
-from utils.loss import SegmentationLoss, KeypointsLoss, DistillationLoss
+from utils.loss import SegmentationLoss, HeatmapLoss, PAFLoss, DistillationLoss
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn
-from utils.visualization import draw_keypoints_linked
+from utils.visualization import overlay_mask, draw_heatmap, draw_paf, draw_keypoints_linked_multi
+from utils.metrics import compute_miou, compute_pck_multi, evaluate_coco
 from utils.wandbLogger import WandbLogger
-from utils.metrics import compute_miou, compute_pck
 
 
 # --- Logging setup ---
@@ -106,8 +105,6 @@ def parse_args_r():
 
     return parser.parse_args()
 
-
-
 def setup_distributed(args):
     if args.dist:
         torch.cuda.set_device(args.local_rank)
@@ -139,125 +136,133 @@ def get_models_and_optim(args, device):
     else:
         sched_s = torch.optim.lr_scheduler.CosineAnnealingLR(
             opt_s, T_max=args.cosine_tmax, eta_min=args.cosine_eta_min)
+
     es_s = {'best_loss': float('inf'), 'counter': 0}
     return teacher,opt_t,sched_t,es_t,student,opt_s,sched_s,es_s
 
-
-def extract_coords_from_heatmaps(heatmaps):
-    B,K,H,W = heatmaps.shape
-    coords = torch.zeros((B,K,2), device=heatmaps.device)
-    for b in range(B):
-        for k in range(K):
-            idx = torch.argmax(heatmaps[b,k])
-            y,x = divmod(idx.item(), W)
-            coords[b,k] = torch.tensor([x*256/W, y*256/H], device=heatmaps.device)
-    return coords
-
-
 def visualize_batch(imgs, masks,
                     t_seg, s_seg,
-                    t_kps, s_kps,
-                    kps_list, vis_list, n):
-    outputs=[]
-    B=imgs.size(0)
-    for i in range(min(n,B)):
-        img_np=(imgs[i].permute(1,2,0).cpu().numpy()*255).astype(np.uint8)
-        def overlay(mt):
-            m=(mt.cpu().numpy().squeeze()>0.5).astype(np.uint8)*255
-            mbgr=cv2.cvtColor(m,cv2.COLOR_GRAY2BGR)
-            return cv2.addWeighted(img_np,0.7,mbgr,0.3,0)
-        entry={
-            'GT_Segmentation':overlay(masks[i,0]),
-            'Teacher_Segmentation':overlay(torch.sigmoid(t_seg[i,0]))
-        }
-        gt_kps=kps_list[i].reshape(-1,2); gt_vis=vis_list[i]
-        entry['GT_Keypoints']=draw_keypoints_linked(img_np,gt_kps,gt_vis)
-        t_vis=np.ones((t_kps.size(1),),int)
-        entry['Teacher_Keypoints']=draw_keypoints_linked(img_np,t_kps[i].cpu().numpy(),t_vis)
-        if s_seg is not None and s_kps is not None:
-            entry['Student_Segmentation']=overlay(torch.sigmoid(s_seg[i,0]))
-            s_vis=np.ones((s_kps.size(1),),int)
-            entry['Student_Keypoints']=draw_keypoints_linked(img_np,s_kps[i].cpu().numpy(),s_vis)
+                    t_hm, t_paf, t_multi,
+                    s_hm=None, s_paf=None, s_multi=None,
+                    kps_list=None, vis_list=None, n=3):
+    """
+    可视化多人体 Bottom-Up 结果
+    """
+    outputs = []
+    B = imgs.size(0)
+    for i in range(min(n, B)):
+        # 原图
+        img_np = (imgs[i].permute(1,2,0).cpu().numpy() * 255).astype(np.uint8)
+
+        entry = {}
+        # GT 分割
+        entry['GT_Segmentation'] = overlay_mask(img_np, masks[i,0].cpu().numpy())
+        # Teacher 分割
+        entry['Teacher_Segmentation'] = overlay_mask(
+            img_np, torch.sigmoid(t_seg[i,0]).cpu().numpy()
+        )
+        # Student 分割（若有）
+        if s_seg is not None:
+            entry['Student_Segmentation'] = overlay_mask(
+                img_np, torch.sigmoid(s_seg[i,0]).cpu().numpy()
+            )
+
+        # Teacher 热力图 & PAF
+        entry['Teacher_Heatmap'] = draw_heatmap(img_np, t_hm[i,0].cpu().numpy())
+        entry['Teacher_PAF']     = draw_paf(img_np, t_paf[i].cpu().numpy())
+        # Teacher 多人体关键点
+        entry['Teacher_Keypoints'] = draw_keypoints_linked_multi(
+            img_np, t_multi[i], np.ones((len(t_multi[i]),), dtype=int)
+        )
+
+        # Student 热力图 & PAF（若有）
+        if s_hm is not None:
+            entry['Student_Heatmap'] = draw_heatmap(img_np, s_hm[i,0].cpu().numpy())
+        if s_paf is not None:
+            entry['Student_PAF'] = draw_paf(img_np, s_paf[i].cpu().numpy())
+        # Student 多人体关键点（若有）
+        if s_multi is not None:
+            entry['Student_Keypoints'] = draw_keypoints_linked_multi(
+                img_np, s_multi[i], np.ones((len(s_multi[i]),), dtype=int)
+            )
+
+        # GT 多人体关键点（若有）
+        if kps_list is not None:
+            entry['GT_Keypoints'] = draw_keypoints_linked_multi(
+                img_np, kps_list[i], vis_list[i]
+            )
+
         outputs.append(entry)
     return outputs
 
 
-def train_one_epoch(model, loader, losses, optimizer=None, teacher=None, scaler=None):
-    training = optimizer is not None
-    model.train() if training else model.eval()
-    if teacher: teacher.eval()
+def train_one_epoch(model, loader, losses, optimizer=None, teacher=None, device='cpu'):
+    is_train = optimizer is not None
+    model.train() if is_train else model.eval()
+    if teacher:
+        teacher.eval()
 
-    agg = {'seg': 0.0, 'pose': 0.0, 'distill': 0.0}
-    tot = 0
-    start = time.time()
+    agg = {'seg': 0.0, 'hm': 0.0, 'paf': 0.0, 'distill': 0.0}
+    total_samples = 0
 
-    # 选择上下文
-    ctx = torch.enable_grad() if training else torch.no_grad()
-
-    for batch_idx, (imgs, masks, kps, vis, _, _) in enumerate(tqdm(loader, desc=('Training' if training else 'Evaluating'), leave=False)):
-
+    for batch in tqdm(loader, desc=('Train' if is_train else 'Eval')):
+        imgs, masks, hm_lbl, paf_lbl, gt_kps, gt_vis, _ = batch
         imgs, masks = imgs.to(device), masks.to(device)
-        kps = [t.to(device) for t in kps]
-        vis = [t.to(device) for t in vis]
+        hm_lbl, paf_lbl = hm_lbl.to(device), paf_lbl.to(device)
+        gt_kps = [k.to(device) for k in gt_kps]
+        gt_vis = [v.to(device) for v in gt_vis]
 
-        with ctx:
-            if training and scaler:
-                # 混合精度前向/反向
-                with torch.cuda.amp.autocast():
-                    if teacher is None:
-                        seg_out, heat, _ = model(imgs)
-                        l_seg = losses['seg'](seg_out, masks)
-                        l_pose = losses['pose'](heat, kps, vis)
-                        loss = l_seg + l_pose
-                        l_dist = 0
-                    else:
-                        with torch.no_grad():
-                            t_seg, t_heat, _ = teacher(imgs)
-                            tk = extract_coords_from_heatmaps(t_heat)
-                        s_seg, sk = model(imgs)
-                        loss, met = losses['distill']((s_seg, sk), (t_seg, tk), (masks, kps, vis))
-                        l_seg = met['task_seg_loss']
-                        l_pose = met['task_pose_loss']
-                        l_dist = met['seg_distill_loss'] + met['pose_distill_loss']
-                optimizer.zero_grad()
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                # 普通精度
-                if teacher is None:
-                    seg_out, heat, _ = model(imgs)
-                    l_seg = losses['seg'](seg_out, masks)
-                    l_pose = losses['pose'](heat, kps, vis)
-                    loss = l_seg + l_pose
-                    l_dist = 0
-                else:
-                    with torch.no_grad():
-                        t_seg, t_heat, _ = teacher(imgs)
-                        tk = extract_coords_from_heatmaps(t_heat)
-                    s_seg, sk = model(imgs)
-                    loss, met = losses['distill']((s_seg, sk), (t_seg, tk), (masks, kps, vis))
-                    l_seg = met['task_seg_loss']
-                    l_pose = met['task_pose_loss']
-                    l_dist = met['seg_distill_loss'] + met['pose_distill_loss']
-                if training:
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
+        if is_train:
+            optimizer.zero_grad()
 
-        # 累计指标
-        b = imgs.size(0)
-        agg['seg'] += l_seg * b
-        agg['pose'] += l_pose * b
-        agg['distill'] += (l_dist if teacher else 0) * b
-        tot += b
+        # Teacher forward for distillation
+        if teacher:
+            with torch.no_grad():
+                t_seg, t_hm, t_paf, t_multi = teacher(imgs)
 
-    if not training:
-        torch.cuda.empty_cache()
+        # Student forward
+        s_seg, s_hm, s_paf, s_multi = model(imgs)
 
-    elapsed = time.time() - start
-    return {k: v / tot for k, v in agg.items()}, elapsed
+        # Compute loss
+        if teacher is None:
+            loss_seg = losses['seg'](s_seg, masks)
+            loss_hm  = losses['hm'] (s_hm,  hm_lbl)
+            loss_paf = losses['paf'](s_paf, paf_lbl)
+            loss = loss_seg + loss_hm + loss_paf
+            loss_dist = torch.tensor(0.0, device=device)
+        else:
+            loss, met = losses['distill'](
+                (s_seg, s_hm, s_paf),
+                (t_seg.detach(), t_hm.detach(), t_paf.detach()),
+                (masks, gt_kps, gt_vis)
+            )
+            loss_seg  = met['seg_loss']
+            loss_hm   = met['hm_loss']
+            loss_paf  = met['paf_loss']
+            loss_dist = met['distill_loss']
 
+        # Backward
+        if is_train:
+            loss.backward()
+            optimizer.step()
+
+        # Accumulate
+        bs = imgs.size(0)
+        if teacher is None:
+            agg['seg'] += loss_seg.item() * bs
+            agg['hm']  += loss_hm .item() * bs
+            agg['paf'] += loss_paf.item() * bs
+        else:
+            agg['seg']     += loss_seg .item() * bs
+            agg['hm']      += loss_hm  .item() * bs
+            agg['paf']     += loss_paf .item() * bs
+            agg['distill'] += loss_dist.item() * bs
+        total_samples += bs
+
+    # Return average losses
+    for k in agg:
+        agg[k] /= total_samples
+    return agg
 
 if __name__=='__main__':
     args = parse_args()
@@ -265,17 +270,23 @@ if __name__=='__main__':
     for k, v in vars(args).items():
         print(f"{k}: {v}")
     print("========================================")
+
     world_size, rank = setup_distributed(args)
     device = torch.device('cuda', args.local_rank) if args.dist else torch.device(args.device)
 
     # Create output dirs
     os.makedirs(args.output_dir, exist_ok=True)
-    for sub in ['vis','models']:
+    for sub in ['vis', 'models']:
         os.makedirs(os.path.join(args.output_dir, sub), exist_ok=True)
+
+    print("Output Directory:", args.output_dir, "Created")
 
     # Data
     sampler = DistributedSampler if args.dist else lambda ds: None
+
+    print(f"Preparing train dataset...")
     train_s = prepare_coco_dataset(args.data_dir, 'train', max_samples=args.max_samples)
+    print(f"Preparing val dataset...")
     val_s   = prepare_coco_dataset(args.data_dir, 'val',   max_samples=args.max_samples)
 
     train_ds = COCODataset(train_s)
@@ -295,174 +306,122 @@ if __name__=='__main__':
                         num_workers=args.num_workers,
                         pin_memory=True)
 
-    # Models & DDP
-    teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s = get_models_and_optim(args, device)
+    # Models & optimizers
+    teacher, opt_t, student, opt_s, seg_fn, hm_fn, paf_fn, dist_fn = get_models_and_optim(args, device)
     if args.dist:
         teacher = DDP(teacher, device_ids=[args.local_rank])
         student = DDP(student, device_ids=[args.local_rank])
 
-    # Losses & metrics.py
-    seg_fn = SegmentationLoss().to(device)
-    kp_fn  = KeypointsLoss().to(device)
-    dist_fn = DistillationLoss().to(device)
-
-    # Wandb
+    # WandB Logger for Teacher
     logger_t = WandbLogger("Teacher", args.entity, config=vars(args))
     try:
-        # ===== Teacher Training =====
-        for epoch in trange(1, args.teacher_epochs+1, desc='Teacher'):
-            # warmup
+        best_pck = 0.0
+        best_t = None
+        for epoch in trange(1, args.teacher_epochs + 1, desc='Teacher'):
+            # Warmup LR
             if epoch <= args.warmup_epochs:
                 lr = args.lr * epoch / args.warmup_epochs
-                for g in opt_t.param_groups: g['lr'] = lr
+                for g in opt_t.param_groups:
+                    g['lr'] = lr
 
-            tr_metrics, tr_time = train_one_epoch(teacher, train_ld,
-                                                  {'seg':seg_fn, 'pose':kp_fn},
-                                                  optimizer=opt_t, teacher=None)
-            val_metrics, _ = train_one_epoch(teacher, val_ld,
-                                             {'seg':seg_fn, 'pose':kp_fn},
-                                             optimizer=None, teacher=None)
-            val_loss = val_metrics['seg'] + val_metrics['pose']
+            # Train & validate
+            metrics = train_one_epoch(
+                teacher, train_ld,
+                {'seg': seg_fn, 'hm': hm_fn, 'paf': paf_fn},
+                optimizer=opt_t, teacher=None, device=device
+            )
+            pck_stats = validate(teacher, val_ld, device)
+            logger_t.log({**metrics, **pck_stats, 'epoch': epoch}, step=epoch)
 
-            # compute additional metrics.py
-            miou = compute_miou(teacher, val_ld, device)
-            pck  = compute_pck(teacher, val_ld, device)
-
-            # scheduler
-            if args.scheduler=='plateau': sched_t.step(val_loss)
-            else: sched_t.step()
-
-            # log scalars
-            logger_t.log({
-                'epoch': epoch,
-                'train/seg_loss': tr_metrics['seg'],
-                'train/pose_loss': tr_metrics['pose'],
-                'val/loss': val_loss,
-                'val/miou': miou,
-                'val/pck': pck,
-                'lr': opt_t.param_groups[0]['lr'],
-                'time/epoch': tr_time,
-                'hardware/gpu_mem_MB': torch.cuda.max_memory_allocated()/1024**2
-            }, step=epoch)
-
-            # log histograms
-            for name, param in teacher.named_parameters():
-                logger_t.log({f'parameters/{name}_hist': param.detach().cpu().numpy()}, step=epoch)
-                if param.grad is not None:
-                    logger_t.log({f'parameters/{name}_grad_hist': param.grad.detach().cpu().numpy()}, step=epoch)
-
-            # visualization GT vs Teacher
-            imgs, masks, kps, vis, _, _ = next(iter(val_ld))
+            # Visualization GT vs Teacher
+            imgs, masks, hm_lbl, paf_lbl, kps, vis, _ = next(iter(val_ld))
             with torch.no_grad():
-                t_seg_out, t_heat, _ = teacher(imgs.to(device))
-                t_kps_pred = extract_coords_from_heatmaps(t_heat)
-            vizs = visualize_batch(imgs, masks,
-                                   t_seg_out, None,
-                                   t_kps_pred, None,
-                                   kps, vis,
-                                   args.val_viz_num)
+                t_seg_out, t_hm, t_paf, t_multi = teacher(imgs.to(device))
+            vizs = visualize_batch(
+                imgs, masks,
+                t_seg_out, None,
+                t_hm, t_paf, t_multi,
+                s_hm=None, s_paf=None, s_multi=None,
+                kps_list=kps, vis_list=vis,
+                n=args.val_viz_num
+            )
             for i, d in enumerate(vizs):
                 logger_t.log({
                     f'viz/teacher_{i}/GT_Segmentation':      wandb.Image(d['GT_Segmentation']),
                     f'viz/teacher_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
+                    f'viz/teacher_{i}/Teacher_Heatmap':      wandb.Image(d['Teacher_Heatmap']),
+                    f'viz/teacher_{i}/Teacher_PAF':          wandb.Image(d['Teacher_PAF']),
                     f'viz/teacher_{i}/GT_Keypoints':         wandb.Image(d['GT_Keypoints']),
                     f'viz/teacher_{i}/Teacher_Keypoints':    wandb.Image(d['Teacher_Keypoints'])
                 }, step=epoch)
 
-            # EarlyStopping
-            if val_loss + args.min_delta < es_t['best_loss']:
-                es_t['best_loss'] = val_loss
-                es_t['counter'] = 0
+            # Save best teacher
+            if pck_stats['pck'] > best_pck:
+                best_pck = pck_stats['pck']
                 best_t = teacher.state_dict()
-            else:
-                es_t['counter'] += 1
-                if es_t['counter'] >= args.patience:
-                    logging.info(f"Teacher early stopping at epoch {epoch}")
-                    break
 
         torch.save(best_t, os.path.join(args.output_dir, 'models', 'teacher.pth'))
         logger_t.finish()
 
         # ===== Student Distillation =====
-        logger_s = WandbLogger("Student", args.entity, config=vars(args))
-
         teacher.load_state_dict(best_t)
         teacher.eval()
-        for epoch in trange(1, args.student_epochs+1, desc='Student'):
+        logger_s = WandbLogger("Student", args.entity, config=vars(args))
+        best_pck_s = 0.0
+        best_s = None
+
+        for epoch in trange(1, args.student_epochs + 1, desc='Student'):
             if epoch <= args.warmup_epochs:
                 lr = args.lr * epoch / args.warmup_epochs
-                for g in opt_s.param_groups: g['lr'] = lr
+                for g in opt_s.param_groups:
+                    g['lr'] = lr
 
-            tr_metrics_s, tr_time_s = train_one_epoch(student, train_ld,
-                                                      {'distill':dist_fn},
-                                                      optimizer=opt_s, teacher=teacher)
-            val_metrics_s, _ = train_one_epoch(student, val_ld,
-                                               {'distill':dist_fn},
-                                               optimizer=None, teacher=teacher)
-            val_loss_s = val_metrics_s['distill']
+            metrics = train_one_epoch(
+                student, train_ld,
+                {'distill': dist_fn},
+                optimizer=opt_s, teacher=teacher, device=device
+            )
+            pck_stats = validate(student, val_ld, device)
+            logger_s.log({**metrics, **pck_stats, 'epoch': epoch}, step=epoch)
 
-            # scheduler
-            if args.scheduler=='plateau': sched_s.step(val_loss_s)
-            else: sched_s.step()
-
-            # compute metrics.py
-            miou_s = compute_miou(student, val_ld, device)
-            pck_s  = compute_pck(student, val_ld, device)
-
-            logger_s.log({
-                'epoch': epoch,
-                'train/distill_loss': tr_metrics_s['distill'],
-                'val/distill_loss': val_loss_s,
-                'val/miou': miou_s,
-                'val/pck': pck_s,
-                'lr': opt_s.param_groups[0]['lr'],
-                'time/epoch': tr_time_s,
-                'hardware/gpu_mem_MB': torch.cuda.max_memory_allocated()/1024**2
-            }, step=epoch)
-
-            # histograms
-            for name, param in student.named_parameters():
-                logger_s.log({f'student/{name}_hist': param.detach().cpu().numpy()}, step=epoch)
-                if param.grad is not None:
-                    logger_s.log({f'student/{name}_grad_hist': param.grad.detach().cpu().numpy()}, step=epoch)
-
-            # visualization GT vs Teacher vs Student
-            imgs, masks, kps, vis, _, _ = next(iter(val_ld))
+            # Visualization GT vs Teacher vs Student
+            imgs, masks, hm_lbl, paf_lbl, kps, vis, _ = next(iter(val_ld))
             with torch.no_grad():
-                t_seg_out, t_heat, _ = teacher(imgs.to(device))
-                t_kps_pred = extract_coords_from_heatmaps(t_heat)
-                s_seg_out, s_kps_pred = student(imgs.to(device))
-            vizs = visualize_batch(imgs, masks,
-                                   t_seg_out, s_seg_out,
-                                   t_kps_pred, s_kps_pred,
-                                   kps, vis,
-                                   args.val_viz_num)
+                t_seg_out, t_hm, t_paf, t_multi = teacher(imgs.to(device))
+                s_seg_out, s_hm, s_paf, s_multi = student(imgs.to(device))
+            vizs = visualize_batch(
+                imgs, masks,
+                t_seg_out, s_seg_out,
+                t_hm, t_paf, t_multi,
+                s_hm=s_hm, s_paf=s_paf, s_multi=s_multi,
+                kps_list=kps, vis_list=vis,
+                n=args.val_viz_num
+            )
             for i, d in enumerate(vizs):
                 logger_s.log({
                     f'viz/student_{i}/GT_Segmentation':      wandb.Image(d['GT_Segmentation']),
                     f'viz/student_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
-                    f'viz/student_{i}/Student_Segmentation': wandb.Image(d['Student_Segmentation']),
-                    f'viz/student_{i}/GT_Keypoints':         wandb.Image(d['GT_Keypoints']),
+                    f'viz/student_{i}/Teacher_Heatmap':      wandb.Image(d['Teacher_Heatmap']),
+                    f'viz/student_{i}/Teacher_PAF':          wandb.Image(d['Teacher_PAF']),
                     f'viz/student_{i}/Teacher_Keypoints':    wandb.Image(d['Teacher_Keypoints']),
-                    f'viz/student_{i}/Student_Keypoints':    wandb.Image(d['Student_Keypoints'])
+                    f'viz/student_{i}/Student_Segmentation': wandb.Image(d['Student_Segmentation']),
+                    f'viz/student_{i}/Student_Heatmap':      wandb.Image(d['Student_Heatmap']),
+                    f'viz/student_{i}/Student_PAF':          wandb.Image(d['Student_PAF']),
+                    f'viz/student_{i}/Student_Keypoints':    wandb.Image(d['Student_Keypoints']),
+                    f'viz/student_{i}/GT_Keypoints':         wandb.Image(d['GT_Keypoints'])
                 }, step=epoch)
 
-            if val_loss_s + args.min_delta < es_s['best_loss']:
-                es_s['best_loss'] = val_loss_s
-                es_s['counter'] = 0
+            if pck_stats['pck'] > best_pck_s:
+                best_pck_s = pck_stats['pck']
                 best_s = student.state_dict()
-            else:
-                es_s['counter'] += 1
-                if es_s['counter'] >= args.patience:
-                    logging.info(f"Student early stopping at epoch {epoch}")
-                    break
 
         torch.save(best_s, os.path.join(args.output_dir, 'models', 'student.pth'))
         logger_s.finish()
 
     except Exception:
-        logging.exception("Training failed at rank %d", rank)
+        logging.exception("Training failed")
         raise
+
     finally:
         if args.dist:
             dist.destroy_process_group()

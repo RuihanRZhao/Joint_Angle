@@ -1,119 +1,127 @@
 import cv2
-import os
 import numpy as np
-from PIL import Image, ImageDraw
+import torch
 
-def visualize_raw_samples(samples, save_dir):
-    """
-    可视化原始训练样本：叠加分割掩码和关键点后保存图像。
-
-    参数:
-        samples (List[Dict]): 由 prepare_coco_dataset 返回的样本列表
-        save_dir (str): 可视化图像保存目录
-    """
-    os.makedirs(save_dir, exist_ok=True)
-
-    for sample in samples:
-        img = cv2.imread(sample["image_path"])
-        if img is None:
-            continue  # 图片读取失败则跳过
-        mask = sample["mask"]
-        keypoints = sample["keypoints"]
-        visibility = sample["visibility"]
-
-        # 将掩码区域设置为红色半透明
-        red_mask = np.zeros_like(img)
-        red_mask[:, :, 2] = (mask * 255).astype(np.uint8)  # OpenCV BGR 格式，红色通道
-        overlay = cv2.addWeighted(img, 1.0, red_mask, 0.5, 0)
-
-        # 绘制关键点为绿色小圆点
-        for (x, y), vis in zip(keypoints, visibility):
-            if vis > 0:
-                center = (int(x), int(y))
-                cv2.circle(overlay, center, radius=3, color=(0, 255, 0), thickness=-1)
-
-        # 保存可视化图像
-        filename = os.path.basename(sample["image_path"])
-        cv2.imwrite(os.path.join(save_dir, filename), overlay)
-
-
-def visualize_predictions(predictions, save_dir):
-    """
-    可视化模型预测结果，并可选叠加 GT 进行对比。
-
-    参数:
-        predictions (List[Dict]): 包含模型预测的列表，每个字典应至少包含:
-            - image_path (str): 图像路径
-            - mask (np.ndarray): 预测分割掩码 (H, W)
-            - keypoints (np.ndarray): 预测关键点 (M,2)
-            - visibility (np.ndarray): 预测关键点可见性 (M,)
-            可选:
-            - gt_mask (np.ndarray): GT 分割掩码
-            - gt_keypoints (np.ndarray): GT 关键点 (N,2)
-            - gt_visibility (np.ndarray): GT 可见性 (N,)
-        save_dir (str): 可视化图像保存目录
-    """
-    os.makedirs(save_dir, exist_ok=True)
-    for pred in predictions:
-        img = cv2.imread(pred["image_path"])
-        if img is None:
-            continue
-        overlay = img.copy().astype(np.float32)
-
-        # 叠加预测掩码（红色）
-        mask_pred = pred.get("mask")
-        if mask_pred is not None:
-            red_mask = np.zeros_like(img)
-            red_mask[:, :, 2] = (mask_pred * 255).astype(np.uint8)
-            overlay = cv2.addWeighted(overlay.astype(np.uint8), 1.0, red_mask, 0.5, 0)
-
-        # 叠加 GT 掩码（绿色）
-        mask_gt = pred.get("gt_mask")
-        if mask_gt is not None:
-            green_mask = np.zeros_like(img)
-            green_mask[:, :, 1] = (mask_gt * 255).astype(np.uint8)
-            overlay = cv2.addWeighted(overlay.astype(np.uint8), 1.0, green_mask, 0.5, 0)
-
-        # 在图像上绘制预测关键点（红点）
-        keypoints_pred = pred.get("keypoints", [])
-        vis_pred = pred.get("visibility", [])
-        for (x, y), v in zip(keypoints_pred, vis_pred):
-            if v > 0:
-                cv2.circle(overlay, (int(x), int(y)), 3, (0, 0, 255), -1)
-        # 绘制 GT 关键点（绿点）
-        keypoints_gt = pred.get("gt_keypoints", [])
-        vis_gt = pred.get("gt_visibility", [])
-        for (x, y), v in zip(keypoints_gt, vis_gt):
-            if v > 0:
-                cv2.circle(overlay, (int(x), int(y)), 3, (0, 255, 0), -1)
-
-        # 保存可视化结果
-        filename = os.path.basename(pred["image_path"])
-        cv2.imwrite(os.path.join(save_dir, filename), overlay.astype(np.uint8))
-
-
-COCO_SKELETON = [
-    (0,1),(0,2),(1,3),(2,4),(5,6),(5,7),(7,9),
-    (6,8),(8,10),(11,12),(5,11),(6,12),(11,13),
-    (13,15),(12,14),(14,16)
+# COCO 骨骼对 (0-based index)
+SKELETON = [
+    (15,13),(13,11),(16,14),(14,12),(11,12),
+    (5,11),(6,12),(5,6),(5,7),(7,9),
+    (6,8),(8,10),(1,2),(0,1),(0,2),
+    (1,3),(2,4),(3,5),(4,6)
 ]
 
-def draw_keypoints_linked(img_arr, kps, vis):
+
+def overlay_mask(image, mask, alpha=0.5, color=(0,255,0)):
     """
-    Draw keypoints and skeleton on image.
-    img_arr: H×W×3 numpy img
-    kps: [K,2] pixel coords
-    vis: [K] visibility flags
+    将二值 mask 叠加到 image 上。
+    image: BGR uint8 HxWx3
+    mask:  [H, W] 0/1 uint8 or bool
     """
-    vis_img = Image.fromarray(img_arr).convert('RGBA')
-    draw = ImageDraw.Draw(vis_img)
-    # points
-    for (x,y), v in zip(kps, vis):
-        if v > 0:
-            draw.ellipse((x-3,y-3,x+3,y+3), fill=(255,0,0,180))
-    # skeleton
-    for i,j in COCO_SKELETON:
-        if vis[i] > 0 and vis[j] > 0:
-            x1,y1 = kps[i]; x2,y2 = kps[j]
-            draw.line((x1,y1,x2,y2), fill=(0,255,0,180), width=2)
-    return np.array(vis_img.convert('RGB'))
+    m = (mask > 0).astype(np.uint8) * 255
+    m_bgr = cv2.cvtColor(m, cv2.COLOR_GRAY2BGR)
+    overlay = cv2.addWeighted(image, 1-alpha, m_bgr, alpha, 0)
+    return overlay
+
+
+def draw_heatmap(image, heatmap, alpha=0.6):
+    """
+    将单通道 heatmap 正规化后叠加到 image 上。
+    heatmap: HxW float32
+    """
+    hm = cv2.normalize(heatmap, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    hm_color = cv2.applyColorMap(hm, cv2.COLORMAP_JET)
+    overlay = cv2.addWeighted(image, 1-alpha, hm_color, alpha, 0)
+    return overlay
+
+
+def draw_paf(image, paf, stride=8, scale=4, color=(255,0,0), thickness=1):
+    """
+    在 image 上绘制 PAF 向量场。
+    paf: [2L, H, W] float32, x-通道，y-通道交替存储
+    stride: 每隔 stride 像素绘制一个向量
+    scale: 缩放向量长度显示
+    """
+    h, w = paf.shape[1:]
+    out = image.copy()
+    for idx, (a,b) in enumerate(SKELETON):
+        vx = paf[2*idx]
+        vy = paf[2*idx+1]
+        # 在网格点上绘制
+        for y in range(0, h, stride):
+            for x in range(0, w, stride):
+                pt1 = (int(x*scale), int(y*scale))
+                dx = int(vx[y,x] * scale)
+                dy = int(vy[y,x] * scale)
+                pt2 = (pt1[0]+dx, pt1[1]+dy)
+                cv2.arrowedLine(out, pt1, pt2, color, thickness, tipLength=0.3)
+    return out
+
+
+def draw_keypoints_linked_multi(
+    image,
+    kps,
+    vis,
+    kp_color=(0,255,0),
+    line_color=(0,255,255),
+    radius=3,
+    kp_thickness=-1,
+    line_thickness=2
+):
+    """
+    在 image 上绘制多人体关键点和骨骼连线。
+    kps: np.ndarray 或 Tensor, [P, 17, 2]
+    vis: np.ndarray 或 Tensor, [P, 17]
+    """
+    if torch.is_tensor(kps):
+        kps = kps.cpu().numpy()
+    if torch.is_tensor(vis):
+        vis = vis.cpu().numpy()
+    out = image.copy()
+    P, K, _ = kps.shape
+    for p in range(P):
+        person_kps = kps[p]
+        person_vis = vis[p]
+        # draw lines
+        for a,b in SKELETON:
+            if person_vis[a] > 0 and person_vis[b] > 0:
+                x1,y1 = person_kps[a]
+                x2,y2 = person_kps[b]
+                pt1 = (int(round(x1)), int(round(y1)))
+                pt2 = (int(round(x2)), int(round(y2)))
+                cv2.line(out, pt1, pt2, line_color, line_thickness)
+        # draw keypoints
+        for (x,y), v in zip(person_kps, person_vis):
+            if v > 0:
+                cv2.circle(out, (int(round(x)), int(round(y))), radius, kp_color, kp_thickness)
+    return out
+
+
+def visualize_sample(
+    image,
+    mask=None,
+    heatmaps=None,
+    pafs=None,
+    multi_kps=None,
+    multi_vis=None
+):
+    """
+    综合可视化：
+      - mask: segmentation overlay
+      - heatmaps: list 或 ndarray [K,H,W]
+      - pafs: ndarray [2L,H,W]
+      - multi_kps/multi_vis: [P,17,2] & [P,17]
+    返回 dict of {name: image}
+    """
+    outputs = {}
+    base = image.copy()
+    if mask is not None:
+        outputs['segmentation'] = overlay_mask(base, mask)
+    if heatmaps is not None:
+        # 展示第一个 heatmap 作为示例，可自行选通道
+        hm0 = heatmaps[0]
+        outputs['heatmap_0'] = draw_heatmap(base, hm0)
+    if pafs is not None:
+        outputs['paf_field'] = draw_paf(base, pafs)
+    if multi_kps is not None and multi_vis is not None:
+        outputs['keypoints'] = draw_keypoints_linked_multi(base, multi_kps, multi_vis)
+    return outputs
