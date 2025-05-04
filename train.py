@@ -210,7 +210,7 @@ def train(args):
             pbar.update(1)
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-            if args.use_wandb and (pbar.n % args.log_interval == 0):
+            if pbar.n % args.log_interval == 0:
                 wandb.log({"train/loss": loss.item(), "epoch": epoch})
 
         pbar.close()
