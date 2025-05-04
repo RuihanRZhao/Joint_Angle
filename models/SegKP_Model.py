@@ -198,7 +198,7 @@ class SegmentKeypointModel(nn.Module):
             nn.Conv2d(256, 256, 3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 51, 1)  # 17个关键点 * 3 维度？
+            nn.Conv2d(256, 55, 1)  # 17个关键点 * 3 维度？
         )
 
         self.postprocessor = PosePostProcessor()  # 你自己的后处理
