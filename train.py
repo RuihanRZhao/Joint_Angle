@@ -1,511 +1,329 @@
 import os
-import time
-import json
-import pprint
-import argparse
-import logging
-import numpy as np
+
 import cv2
+import random
+import numpy as np
 import torch
-import torch.nn as nn
 import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from torch.cuda.amp import autocast, GradScaler
 import wandb
-from tqdm import tqdm, trange
-import contextlib
 
-from pycocotools.coco import COCO
+from utils.visualization import SKELETON
+from models.SegKP_Model import SegmentKeypointModel
+from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
+from early_stopping_pytorch import EarlyStopping
+from utils.coco import prepare_coco_dataset, COCODataset, collate_fn  # 导入数据集类
+from utils.loss import criterion
 
-from models.teacher_model import TeacherModel
-from models.student_model import StudentModel
-from utils.loss import SegmentationLoss, PoseLoss, DistillationLoss
-from utils.coco import prepare_coco_dataset, COCODataset, collate_fn
-from utils.visualization import overlay_mask, draw_heatmap, draw_paf, draw_keypoints_linked_multi
-from utils.metrics import validate_all
-from utils.wandbLogger import WandbLogger
+from visualization import overlay_mask, draw_keypoints_linked_multi
+from utils.postprocess import PosePostProcessor
 
-# --- Logging setup ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+from config import arg_test, arg_real
 
 
-def parse_args_test():
-    parser = argparse.ArgumentParser(description="Seg→Pose Distill Training with Advanced Features")
-    parser.add_argument('--data_dir', default='run/data', help='COCO 数据集根目录')
-    parser.add_argument('--output_dir', default='run', help='输出文件目录')
-    parser.add_argument('--teacher_epochs', type=int, default=3, help='教师模型训练轮数')
-    parser.add_argument('--student_epochs', type=int, default=3, help='学生蒸馏训练轮数')
-    parser.add_argument('--batch_size', type=int, default=4, help='训练批大小')
-    parser.add_argument('--lr', type=float, default=1e-4, help='初始学习率')
-    # scheduler params
-    parser.add_argument('--scheduler', choices=['plateau', 'cosine'], default='plateau', help='学习率调度策略')
-    parser.add_argument('--plateau_factor', type=float, default=0.5, help='ReduceLROnPlateau 因子')
-    parser.add_argument('--plateau_patience', type=int, default=3, help='ReduceLROnPlateau 耐心轮数')
-    parser.add_argument('--cosine_tmax', type=int, default=50, help='CosineAnnealingLR T_max')
-    parser.add_argument('--cosine_eta_min', type=float, default=1e-6, help='CosineAnnealingLR 最低学习率')
-    # EarlyStopping
-    parser.add_argument('--min_delta', type=float, default=1e-4, help='EarlyStopping 最小改进阈值')
-    parser.add_argument('--patience', type=int, default=7, help='EarlyStopping 耐心值（轮）')
-    parser.add_argument('--warmup_epochs', type=int, default=5, help='线性 warmup 的 epoch 数')
-    parser.add_argument('--val_viz_num', type=int, default=3, help='每轮上传至 WandB 的验证样本数量')
-    parser.add_argument('--num_workers', type=int, default=1, help='DataLoader 并行 worker 数量')
-    
-    # 混合精度
-    parser.add_argument('--use_fp16', action='store_true', default=True, help='启用 torch.cuda.amp 混合精度')
-    # debug
-    parser.add_argument('--max_samples', type=int, default=10, help='最大加载样本数（快速验证）')
-    # distributed
-    parser.add_argument('--local_rank', type=int, default=0, help='分布式训练本地 GPU 编号')
-    parser.add_argument('--dist', action='store_true', help='是否启用分布式训练')
-    # wandb
-    parser.add_argument('--entity', default='joint_angle', help='WandB 实体名（用户名或团队）')
-
-    parser.add_argument('--device', default=('cuda' if torch.cuda.is_available() else 'cpu'), help='运行设备')
-
-    parser.add_argument('--project_name', default='', help='Project名字后缀')
-
-    return parser.parse_args()
+def setup(rank, world_size):
+    """初始化分布式训练环境"""
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Seg→Pose Distill Training for B200 (512×512)")
-
-    # 数据与输出
-    parser.add_argument('--data_dir', default='run/data', help='COCO 数据集根目录')
-    parser.add_argument('--output_dir', default='run', help='输出文件目录')
-
-    # 训练轮数
-    parser.add_argument('--teacher_epochs', type=int, default=250, help='教师模型训练轮数')
-    parser.add_argument('--student_epochs', type=int, default=100, help='学生蒸馏训练轮数')
-
-    # 大分辨率下的 batch size
-    parser.add_argument('--batch_size', type=int, default=64, help='训练批大小 (480x480 建议 8–16)')
-
-    # 学习率
-    parser.add_argument('--lr', type=float, default=1e-4, help='初始学习率')
-
-    # 学习率调度器参数
-    parser.add_argument('--scheduler', choices=['plateau', 'cosine'], default='plateau',
-                        help='学习率调度策略')
-    parser.add_argument('--plateau_factor', type=float, default=0.5, help='ReduceLROnPlateau 因子')
-    parser.add_argument('--plateau_patience', type=int, default=5, help='ReduceLROnPlateau 耐心轮数')
-    parser.add_argument('--cosine_tmax', type=int, default=100, help='CosineAnnealingLR T_max')
-    parser.add_argument('--cosine_eta_min', type=float, default=1e-6, help='CosineAnnealingLR 最低学习率')
-
-    # EarlyStopping
-    parser.add_argument('--min_delta', type=float, default=1e-5, help='EarlyStopping 最小改进阈值')
-    parser.add_argument('--patience', type=int, default=25, help='EarlyStopping 耐心值（轮）')
-    
-    # 混合精度
-    parser.add_argument('--use_fp16', action='store_true', default=True, help='启用 torch.cuda.amp 混合精度')
-
-    # Warmup & 可视化
-    parser.add_argument('--warmup_epochs', type=int, default=10, help='线性 warmup 的 epoch 数')
-    parser.add_argument('--val_viz_num', type=int, default=2, help='每轮上传至 WandB 的验证样本数量')
-
-    # DataLoader 并行
-    parser.add_argument('--num_workers', type=int, default=24, help='DataLoader 并行 worker 数量')
-
-    # 调试用
-    parser.add_argument('--max_samples', type=int, default=None, help='最大加载样本数（快速验证）')
-
-    # 分布式训练
-    parser.add_argument('--local_rank', type=int, default=0, help='分布式训练本地 GPU 编号')
-    parser.add_argument('--dist', action='store_true', help='是否启用分布式训练')
-
-    # WandB
-    parser.add_argument('--entity', default='joint_angle', help='WandB 实体名（用户名或团队）')
-    parser.add_argument('--device', default=('cuda' if torch.cuda.is_available() else 'cpu'),
-                        help='运行设备')
-
-    parser.add_argument('--project_name', default='_model', help='Project名字后缀')
-
-    return parser.parse_args()
+def cleanup():
+    """清理分布式训练环境"""
+    dist.destroy_process_group()
 
 
-def setup_distributed(args):
-    if args.dist:
-        torch.cuda.set_device(args.local_rank)
-        dist.init_process_group(backend='nccl')
-        world_size = dist.get_world_size()
-        rank = dist.get_rank()
-    else:
-        world_size, rank = 1, 0
-    return world_size, rank
+def create_mask_visual(mask):
+    """创建分割掩膜可视化"""
+    # 使用黑色背景上的红色掩膜
+    vis = np.zeros((*mask.shape, 3), dtype=np.uint8)
+    vis[mask > 0] = [255, 0, 0]
+    return vis
 
 
-def get_models_and_optim(args, device):
-    # Teacher
-    teacher = TeacherModel().to(device)
-    opt_t = torch.optim.Adam(teacher.parameters(), lr=args.lr)
-    if args.scheduler == 'plateau':
-        sched_t = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            opt_t, mode='min', factor=args.plateau_factor, patience=args.plateau_patience)
-    else:
-        sched_t = torch.optim.lr_scheduler.CosineAnnealingLR(
-            opt_t, T_max=args.cosine_tmax, eta_min=args.cosine_eta_min)
-    es_t = {'best_loss': float('inf'), 'counter': 0}
-    # Student
-    student = StudentModel().to(device)
-    opt_s = torch.optim.Adam(student.parameters(), lr=args.lr)
-    if args.scheduler == 'plateau':
-        sched_s = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            opt_s, mode='min', factor=args.plateau_factor, patience=args.plateau_patience)
-    else:
-        sched_s = torch.optim.lr_scheduler.CosineAnnealingLR(
-            opt_s, T_max=args.cosine_tmax, eta_min=args.cosine_eta_min)
+def create_pose_visual(kps_list, image_size, skeleton):
+    """创建多人关键点可视化"""
+    h, w = image_size
+    vis = np.zeros((h, w, 3), dtype=np.uint8)
 
-    es_s = {'best_loss': float('inf'), 'counter': 0}
+    for person_kps in kps_list:
+        # 绘制骨骼连线
+        for (a, b) in skeleton:
+            if a >= len(person_kps) or b >= len(person_kps):
+                continue
+            x1, y1 = person_kps[a]
+            x2, y2 = person_kps[b]
+            if x1 > 0 and y1 > 0 and x2 > 0 and y2 > 0:
+                cv2.line(vis, (int(x1), int(y1)), (int(x2), int(y2)),
+                         (0, 255, 0), 2)
 
-    scaler = torch.amp.GradScaler(
-        'cuda'
-    ) if args.use_fp16 else None
-    
-    return teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s, scaler
+        # 绘制关键点
+        for (x, y) in person_kps:
+            if x > 0 and y > 0:
+                cv2.circle(vis, (int(x), int(y)), 3, (0, 0, 255), -1)
 
+    return vis
 
-def visualize_batch(imgs, masks,
-                    t_seg, s_seg,
-                    t_hm, t_paf, t_multi,
-                    s_hm=None, s_paf=None, s_multi=None,
-                    kps_list=None, vis_list=None, n=3):
-    """
-    可视化多人体 Bottom-Up 结果
-    """
-    outputs = []
-    B = imgs.size(0)
-    for i in range(min(n, B)):
-        # 原图
-        img_np = (imgs[i].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+def log_samples(
+        seg_gts, seg_preds,
+        pose_gts, pose_preds,
+        original_sizes,  # 原始图像尺寸列表 [(H,W), ...]
+        epoch,
+        skeleton=SKELETON
+):
+    """记录样本可视化对比结果到WandB"""
+    # 随机选择2个样本
+    indices = random.sample(range(len(seg_gts)), min(2, len(seg_gts)))
 
-        entry = {}
-        # GT 分割
-        entry['GT_Segmentation'] = overlay_mask(img_np, masks[i, 0].cpu().numpy())
-        # Teacher 分割
-        entry['Teacher_Segmentation'] = overlay_mask(
-            img_np, torch.sigmoid(t_seg[i, 0]).cpu().numpy()
-        )
-        # Student 分割（若有）
-        if s_seg is not None:
-            entry['Student_Segmentation'] = overlay_mask(
-                img_np, torch.sigmoid(s_seg[i, 0]).cpu().numpy()
-            )
+    table = wandb.Table(columns=[
+        "GT Segmentation", "Pred Segmentation",
+        "GT Keypoints", "Pred Keypoints"
+    ])
 
-        # Teacher 热力图 & PAF
-        entry['Teacher_Heatmap'] = draw_heatmap(img_np, t_hm[i, 0].cpu().numpy())
-        entry['Teacher_PAF'] = draw_paf(img_np, t_paf[i].cpu().numpy())
-        # Teacher 多人体关键点
-        entry['Teacher_Keypoints'] = draw_keypoints_linked_multi(
-            img_np, t_multi[i], np.ones((len(t_multi[i]),), dtype=int)
+    # 初始化后处理器
+    post_processor = PosePostProcessor()
+
+    for idx in indices:
+        # 获取原始尺寸
+        orig_h, orig_w = original_sizes[idx]
+
+        # 真实分割处理
+        gt_mask = seg_gts[idx].cpu().numpy().squeeze()
+        gt_mask = cv2.resize(gt_mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+        gt_seg = create_mask_visual(gt_mask)
+
+        # 预测分割处理
+        pred_logit = seg_preds[idx].cpu().numpy().squeeze()
+        pred_mask = cv2.resize(pred_logit, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+        pred_mask = (torch.sigmoid(torch.from_numpy(pred_mask)) > 0.5).numpy()
+        pred_seg = create_mask_visual(pred_mask)
+
+        # 真实关键点处理
+        gt_heatmap = pose_gts[idx].cpu().numpy()
+        gt_heatmap = F.interpolate(
+            torch.from_numpy(gt_heatmap).unsqueeze(0),
+            size=(orig_h, orig_w),
+            mode='bilinear',
+            align_corners=False
+        )[0].numpy()
+        gt_kps = post_processor(gt_heatmap[None])[0]  # [P,K,2]
+        gt_pose = create_pose_visual(gt_kps, (orig_h, orig_w), skeleton)
+
+        # 预测关键点处理
+        pred_heatmap = pose_preds[idx].cpu().numpy()
+        pred_heatmap = F.interpolate(
+            torch.from_numpy(pred_heatmap).unsqueeze(0),
+            size=(orig_h, orig_w),
+            mode='bilinear',
+            align_corners=False
+        )[0].numpy()
+        pred_kps = post_processor(pred_heatmap[None])[0]
+        pred_pose = create_pose_visual(pred_kps, (orig_h, orig_w), skeleton)
+
+        # 添加到表格
+        table.add_data(
+            wandb.Image(gt_seg),
+            wandb.Image(pred_seg),
+            wandb.Image(gt_pose),
+            wandb.Image(pred_pose)
         )
 
-        # Student 热力图 & PAF（若有）
-        if s_hm is not None:
-            entry['Student_Heatmap'] = draw_heatmap(img_np, s_hm[i, 0].cpu().numpy())
-        if s_paf is not None:
-            entry['Student_PAF'] = draw_paf(img_np, s_paf[i].cpu().numpy())
-        # Student 多人体关键点（若有）
-        if s_multi is not None:
-            entry['Student_Keypoints'] = draw_keypoints_linked_multi(
-                img_np, s_multi[i], np.ones((len(s_multi[i]),), dtype=int)
-            )
-
-        # GT 多人体关键点（若有）
-        if kps_list is not None:
-            entry['GT_Keypoints'] = draw_keypoints_linked_multi(
-                img_np, kps_list[i], vis_list[i]
-            )
-
-        outputs.append(entry)
-    return outputs
+    wandb.log({f"Validation Samples Epoch {epoch}": table})
 
 
-def run_one_epoch(model: nn.Module,
-                  loader: DataLoader,
-                  losses: dict,
-                  optimizer=None,
-                  teacher: nn.Module = None,
-                  device: str = 'cpu',
-                  scaler: torch.amp.GradScaler = None,
-                  args=None):
-    is_train = optimizer is not None
-    header   = 'train' if is_train else 'validate'
+def main_worker(rank, world_size, args):
+    """每个GPU的工作进程"""
+    # 初始化分布式训练
+    setup(rank, world_size)
+    torch.cuda.set_device(rank)
 
-    model.train() if is_train else model.eval()
-    if teacher is not None:
-        teacher.eval()
+    # 数据集加载
+    train_samples = prepare_coco_dataset(
+        args.data_dir, split='train', max_samples=args.max_samples)
+    val_samples = prepare_coco_dataset(
+        args.data_dir, split='val', max_samples=args.max_samples)
 
-    # 用于累加
-    agg = {
-        f'{header}/seg':     0.0,
-        f'{header}/pose':    0.0,
-        f'{header}/distill': 0.0
-    }
-    total_samples = 0
+    # 数据加载器
+    train_dataset = COCODataset(train_samples)
+    val_dataset = COCODataset(val_samples)
 
-    for batch in tqdm(loader, desc=header.capitalize()):
-        imgs, masks, hm_lbl, paf_lbl, gt_kps, gt_vis, _ = batch
-        imgs, masks = imgs.to(device), masks.to(device)
-        hm_lbl, paf_lbl = hm_lbl.to(device), paf_lbl.to(device)
+    train_sampler = DistributedSampler(
+        train_dataset, num_replicas=world_size, rank=rank)
+    train_loader = DataLoader(
+        train_dataset, batch_size=args.batch_size, sampler=train_sampler,
+        num_workers=args.num_workers, pin_memory=True, collate_fn=collate_fn)
 
-        gt_kps = [
-            k.to(device) if isinstance(k, torch.Tensor)
-            else torch.from_numpy(k).float().to(device)
-            for k in gt_kps
-        ]
-        gt_vis = [
-            v.to(device) if isinstance(v, torch.Tensor)
-            else torch.from_numpy(v).float().to(device)
-            for v in gt_vis
-        ]
+    val_sampler = DistributedSampler(
+        val_dataset, num_replicas=world_size, rank=rank)
+    val_loader = DataLoader(
+        val_dataset, batch_size=args.batch_size, sampler=val_sampler,
+        num_workers=args.num_workers, pin_memory=True, collate_fn=collate_fn)
 
-        if is_train:
+    # 模型初始化
+    model = SegmentKeypointModel().to(rank)
+    model = DDP(model, device_ids=[rank])
+
+    # 优化器
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=args.lr, weight_decay=1e-4)
+
+    # 学习率调度器
+    scheduler = CosineAnnealingWarmupRestarts(
+        optimizer,
+        first_cycle_steps=args.epochs,
+        cycle_mult=1.0,
+        max_lr=args.lr,
+        min_lr=1e-6,
+        warmup_steps=args.warmup_epochs * len(train_loader),
+        gamma=1.0
+    )
+
+    # 混合精度
+    scaler = GradScaler(enabled=args.use_fp16)
+
+    # EarlyStopping
+    early_stopping = EarlyStopping(
+        patience=args.patience, delta=args.min_delta)
+
+    # 仅在主进程初始化WandB
+    if rank == 0:
+        wandb.init(
+            project=f"{args.project_name}",
+            config=vars(args),
+            entity=args.entity)
+
+    # 训练循环
+    for epoch in range(args.epochs):
+        train_sampler.set_epoch(epoch)
+
+        # 训练阶段
+        model.train()
+        train_loss = 0.0
+
+        train_pbar = tqdm(total=len(train_loader),
+                          desc=f"Epoch {epoch + 1}/{args.epochs} [Train]",
+                          position=0,
+                          leave=True) if rank == 0 else train_pbar = None
+
+        for batch_idx, (imgs, masks, hm, paf, _, _, _) in enumerate(train_loader):
+            imgs = imgs.to(rank)
+            masks = masks.to(rank)
+            hm = hm.to(rank)
+            paf = paf.to(rank)
+
             optimizer.zero_grad()
 
-        # Teacher forward (no grad)
-        if teacher is not None:
-            with torch.no_grad():
-                t_seg, t_hm, t_paf, *_ = teacher(imgs)
+            with autocast(enabled=args.use_fp16):
+                seg_pred, pose_pred = model(imgs)
+                loss = criterion(seg_pred, masks, pose_pred, hm, paf)
 
-        # Student forward with/without AMP autocast
-        if is_train and scaler is not None:
-            autocast_ctx = torch.amp.autocast(device_type='cuda')
-        elif not is_train:
-            autocast_ctx = torch.no_grad()
-        else:
-            # training without AMP
-            autocast_ctx = contextlib.nullcontext()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            scheduler.step()
 
-        with autocast_ctx:
-            s_seg, s_hm, s_paf, s_multi = model(imgs)
+            train_loss += loss.item()
 
-            # compute loss
-            if teacher is None:
-                # 分割损失
-                loss_seg  = losses['seg'](s_seg, masks)
-                # 姿态损失（heatmap + PAF 一起计算）
-                loss_pose = losses['pose'](s_hm, hm_lbl, s_paf, paf_lbl)
+            if rank == 0:
+                train_pbar.update(1)
+                train_pbar.set_postfix({
+                    "loss": f"{loss.item():.4f}",
+                    "lr": f"{scheduler.get_last_lr()[0]:.2e}"
+                })
 
-                loss = loss_seg + loss_pose
-                loss_dist = torch.tensor(0.0, device=device)
+                if batch_idx % args.log_interval == 0:
+                    wandb.log({"train/loss": loss.item()})
 
-                met = {
-                    'seg_loss':     loss_seg,
-                    'pose_loss':    loss_pose,
-                    'distill_loss': loss_dist,
-                }
+        if rank == 0: train_pbar.close()
 
-            else:
-                loss, met = losses['distill'](
-                    (s_seg, s_hm, s_paf),
-                    (t_seg.detach(), t_hm.detach(), t_paf.detach()),
-                    (masks, gt_kps, gt_vis)
-                )
-                loss_seg = met['seg_loss']
-                loss_pose = met['pose_loss'] if 'pose_loss' in met else (met['hm_loss'] + met['paf_loss'])
-                loss_dist = met['distill_loss']
+        # 验证阶段
+        model.eval()
+        val_loss = 0.0
+        sample_seg_gts = []
+        sample_seg_preds = []
+        sample_pose_gts = []
+        sample_pose_preds = []
+        sample_sizes = []
 
-        # 反向传播
-        if is_train:
-            if scaler is not None:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                loss.backward()
-                optimizer.step()
+        val_pbar = tqdm(total=len(val_loader),
+                            desc=f"Epoch {epoch + 1}/{args.epochs} [Val]",
+                            position=0,
+                            leave=False) if rank == 0 else val_pbar = None
 
-        # 累加各项 loss
-        bs = imgs.size(0)
-        agg[f'{header}/seg']     += met.get('seg_loss',     0.0).item() * bs
-        agg[f'{header}/pose']    += met.get('pose_loss',    0.0).item() * bs
-        agg[f'{header}/distill'] += met.get('distill_loss', 0.0).item() * bs
-        total_samples += bs
+        with torch.no_grad():
+            for batch in val_loader:
+                mgs, masks, hm, paf, _, _, sizes = batch
 
-    # 取平均
-    for k in agg:
-        agg[k] /= total_samples
+                imgs = imgs.to(rank)
+                masks = masks.to(rank)
+                hm = hm.to(rank)
+                paf = paf.to(rank)
 
-    return agg
+                with autocast(enabled=args.use_fp16):
+                    seg_pred, pose_pred = model(imgs)
+                    loss = criterion(seg_pred, masks, pose_pred, hm, paf)
 
+                val_loss += loss.item()
 
+                if rank == 0:
+                    val_pbar.update(1)
 
-if __name__ == '__main__':
-    args = parse_args()
-    print("======== Training Configuration ========")
-    for k, v in vars(args).items():
-        print(f"{k}: {v}")
-    print("========================================")
+                    if len(sample_seg_gts) < args.val_viz_num:
+                        sample_seg_gts.extend(masks.cpu().unbind())
+                        sample_seg_preds.extend(seg_pred.cpu().unbind())
+                        sample_pose_gts.extend(hm.cpu().unbind())
+                        sample_pose_preds.extend(pose_pred.cpu().unbind())
+                        sample_sizes.extend(sizes)
 
-    world_size, rank = setup_distributed(args)
-    device = torch.device('cuda', args.local_rank) if args.dist else torch.device(args.device)
-
-    # Create output dirs
-    os.makedirs(args.output_dir, exist_ok=True)
-    for sub in ['vis', 'models']:
-        os.makedirs(os.path.join(args.output_dir, sub), exist_ok=True)
-
-    # Data
-    sampler = DistributedSampler if args.dist else lambda ds: None
-
-    print(f"Preparing train dataset...")
-    train_s = prepare_coco_dataset(args.data_dir, 'train', max_samples=args.max_samples)
-    print(f"Train samples: {len(train_s)}.")
-    print(f"Preparing val dataset...")
-    val_s = prepare_coco_dataset(args.data_dir, 'val', max_samples=args.max_samples)
-    print(f"Val samples: {len(val_s)}.")
-
-    train_ds = COCODataset(train_s)
-    val_ds = COCODataset(val_s)
-    train_ld = DataLoader(train_ds,
-                          batch_size=args.batch_size,
-                          sampler=sampler(train_ds),
-                          shuffle=not args.dist,
-                          collate_fn=collate_fn,
-                          num_workers=args.num_workers,
-                          pin_memory=True)
-    val_ld = DataLoader(val_ds,
-                        batch_size=1,
-                        sampler=sampler(val_ds),
-                        shuffle=False,
-                        collate_fn=collate_fn,
-                        num_workers=args.num_workers,
-                        pin_memory=True)
-
-    # Models & optimizers
-    teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s, scaler= get_models_and_optim(args, device)
-
-    if args.dist:
-        teacher = DDP(teacher, device_ids=[args.local_rank])
-        student = DDP(student, device_ids=[args.local_rank])
-
-    seg_fn = SegmentationLoss()
-    pose_fn = PoseLoss()  # 同时计算 heatmap MSE + paf L1
-    dist_fn = DistillationLoss()
-
-
-    # WandB Logger for Teacher
-    logger_t = WandbLogger(f"Teacher{args.project_name}", args.entity, config=vars(args))
-    try:
-        best_pck = 0.0
-        best_t = teacher.state_dict()
-        for epoch in trange(1, args.teacher_epochs + 1, desc='Teacher'):
-            # Warmup LR
-            if epoch <= args.warmup_epochs:
-                lr = args.lr * epoch / args.warmup_epochs
-                for g in opt_t.param_groups:
-                    g['lr'] = lr
-
-            # Train & validate
-            metrics = run_one_epoch(
-                teacher, train_ld,
-                {'seg': seg_fn, 'pose': pose_fn},
-                optimizer=opt_t, teacher=None, device=device, scaler=scaler
+        if rank == 0:
+            log_samples(
+                seg_gts=sample_seg_gts,
+                seg_preds=sample_seg_preds,
+                pose_gts=sample_pose_gts,
+                pose_preds=sample_pose_preds,
+                original_sizes=sample_sizes,
+                epoch=epoch + 1
             )
-            pck_stats = validate_all(
-                student, val_ld, device,
-                coco_gt_json     = os.path.join(args.data_dir, 'annotations', 'person_keypoints_val2017.json'),
-                tmp_results_json = os.path.join(args.output_dir, f'val_results_student_{epoch}.json'),
-                thresh_ratio     = 0.05
-            )
-
-            logger_t.log({**metrics, **pck_stats, 'epoch': epoch}, step=epoch)
-
-            # Visualization GT vs Teacher
-            imgs, masks, hm_lbl, paf_lbl, kps, vis, _ = next(iter(val_ld))
-            with torch.no_grad():
-                t_seg_out, t_hm, t_paf, t_multi = teacher(imgs.to(device))
-            vizs = visualize_batch(
-                imgs, masks,
-                t_seg_out, None,
-                t_hm, t_paf, t_multi,
-                s_hm=None, s_paf=None, s_multi=None,
-                kps_list=kps, vis_list=vis,
-                n=args.val_viz_num
-            )
-            for i, d in enumerate(vizs):
-                logger_t.log({
-                    f'viz/teacher_{i}/GT_Segmentation': wandb.Image(d['GT_Segmentation']),
-                    f'viz/teacher_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
-                    f'viz/teacher_{i}/GT_Keypoints': wandb.Image(d['GT_Keypoints']),
-                    f'viz/teacher_{i}/Teacher_Keypoints': wandb.Image(d['Teacher_Keypoints'])
-                }, step=epoch)
-
-            # Save best teacher
-            val_pck = pck_stats['coco/AP50']
-            if val_pck > best_pck:
-                    best_pck = val_pck
-                    best_t = teacher.state_dict()
-
-            torch.cuda.empty_cache()
-
-        torch.save(best_t, os.path.join(args.output_dir, 'models', 'teacher.pth'))
-        logger_t.finish()
-
-        # ===== Student Distillation =====
-        teacher.load_state_dict(best_t)
-        teacher.eval()
-        logger_s = WandbLogger(f"Student{args.project_name}", args.entity, config=vars(args))
-        best_pck = 0.0
-        best_s = student.state_dict()
-
-        for epoch in trange(1, args.student_epochs + 1, desc='Student'):
-            if epoch <= args.warmup_epochs:
-                lr = args.lr * epoch / args.warmup_epochs
-                for g in opt_s.param_groups:
-                    g['lr'] = lr
-
-            metrics = run_one_epoch(
-                student, train_ld,
-                {'distill': dist_fn},
-                optimizer=opt_s, teacher=teacher, device=device, scaler=scaler
-            )
-            pck_stats = validate_all(
-                teacher, val_ld, device,
-                coco_gt_json   = os.path.join(args.data_dir, 'annotations', 'person_keypoints_val2017.json'),
-                tmp_results_json = os.path.join(args.output_dir, 'val_results.json'),
-                thresh_ratio  = 0.05
-            )
-            logger_s.log({**metrics, **pck_stats, 'epoch': epoch}, step=epoch)
-
-            # Visualization GT vs Teacher vs Student
-            imgs, masks, hm_lbl, paf_lbl, kps, vis, _ = next(iter(val_ld))
-            with torch.no_grad():
-                t_seg_out, t_hm, t_paf, t_multi = teacher(imgs.to(device))
-                s_seg_out, s_hm, s_paf, s_multi = student(imgs.to(device))
-            vizs = visualize_batch(
-                imgs, masks,
-                t_seg_out, s_seg_out,
-                t_hm, t_paf, t_multi,
-                s_hm=s_hm, s_paf=s_paf, s_multi=s_multi,
-                kps_list=kps, vis_list=vis,
-                n=args.val_viz_num
-            )
-            for i, d in enumerate(vizs):
-                logger_s.log({
-                    f'viz/student_{i}/GT_Segmentation': wandb.Image(d['GT_Segmentation']),
-                    f'viz/student_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
-                    f'viz/student_{i}/Teacher_Keypoints': wandb.Image(d['Teacher_Keypoints']),
-                    f'viz/student_{i}/Student_Segmentation': wandb.Image(d['Student_Segmentation']),
-                    f'viz/student_{i}/Student_Keypoints': wandb.Image(d['Student_Keypoints']),
-                    f'viz/student_{i}/GT_Keypoints': wandb.Image(d['GT_Keypoints'])
-                }, step=epoch)
+            val_pbar.close()
 
 
-            val_pck = pck_stats['coco/AP50']
-            if val_pck > best_pck:
-                    best_pck = val_pck
-                    best_t = student.state_dict()
+        # 收集所有进程的损失
+        torch.distributed.reduce(train_loss, dst=0)
+        torch.distributed.reduce(val_loss, dst=0)
 
-            torch.cuda.empty_cache()
+        if rank == 0:
+            avg_train_loss = train_loss / (len(train_loader) * world_size)
+            avg_val_loss = val_loss / (len(val_loader) * world_size)
 
-        torch.save(best_s, os.path.join(args.output_dir, 'models', 'student.pth'))
-        logger_s.finish()
+            wandb.log({
+                "epoch": epoch + 1,
+                "train/avg_loss": avg_train_loss,
+                "val/avg_loss": avg_val_loss
+            })
 
-    except Exception:
-        logging.exception("Training failed")
-        raise
+            # EarlyStopping检查
+            early_stopping(avg_val_loss, model)
+            if early_stopping.early_stop:
+                print("Early stopping triggered")
+                break
 
-    finally:
-        if args.dist:
-            dist.destroy_process_group()
+    # 清理分布式环境
+    cleanup()
+
+
+if __name__ == "__main__":
+    parser = arg_test()
+    # parser = arg_real()
+
+    # 启动多进程训练
+    world_size = torch.cuda.device_count()
+    mp.spawn(
+        main_worker,
+        args=(world_size, args),
+        nprocs=world_size,
+        join=True
+    )

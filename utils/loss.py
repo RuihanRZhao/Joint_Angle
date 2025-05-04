@@ -1,245 +1,114 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, List
-from torch import Tensor
 
+
+class AdaptiveMultiTaskLoss(nn.Module):
+    """多任务自适应加权损失函数"""
+
+    def __init__(self, num_tasks=2, init_log_var=0.0):
+        super().__init__()
+        self.log_vars = nn.Parameter(torch.zeros(num_tasks) + init_log_var)
+
+    def forward(self, task_losses):
+        """
+        输入:
+            task_losses: 各任务损失列表 [L_seg, L_pose]
+        输出:
+            total_loss: 加权总损失
+        """
+        assert len(task_losses) == len(self.log_vars)
+
+        total = 0.0
+        for i, loss in enumerate(task_losses):
+            precision = torch.exp(-self.log_vars[i])
+            total += precision * loss + self.log_vars[i]
+
+        return total
 
 
 class SegmentationLoss(nn.Module):
-    """
-    二分类分割损失：BCEWithLogits
-    """
+    """分割任务复合损失函数"""
+
+    def __init__(self, alpha=0.7, beta=0.3, gamma=2.0, smooth=1e-6):
+        super().__init__()
+        self.alpha = alpha  # Tversky损失参数
+        self.beta = beta  # Tversky损失参数
+        self.gamma = gamma  # Focal损失参数
+        self.smooth = smooth  # 数值稳定性
+
+    def tversky_loss(self, pred, target):
+        # 将logits转换为概率
+        pred = torch.sigmoid(pred)
+
+        # 计算TP, FP, FN
+        tp = torch.sum(pred * target)
+        fp = torch.sum(pred * (1 - target))
+        fn = torch.sum((1 - pred) * target)
+
+        # Tversky指数
+        numerator = tp + self.smooth
+        denominator = tp + self.alpha * fp + self.beta * fn + self.smooth
+
+        return 1 - (numerator / denominator)
+
+    def focal_loss(self, pred, target):
+        # 计算二元交叉熵
+        bce = F.binary_cross_entropy_with_logits(pred, target, reduction='none')
+
+        # Focal权重
+        pt = torch.exp(-bce)
+        focal_weight = (1 - pt) ** self.gamma
+
+        return torch.mean(focal_weight * bce)
+
+    def forward(self, pred, target):
+        tversky = self.tversky_loss(pred, target)
+        focal = self.focal_loss(pred, target)
+        return 0.6 * tversky + 0.4 * focal
+
+
+class PoseEstimationLoss(nn.Module):
+    """姿态估计加权热图损失"""
+
+    def __init__(self, beta=0.7, eps=1e-6):
+        super().__init__()
+        self.beta = beta  # 关键点区域权重系数
+        self.eps = eps  # 防止除零
+
+    def forward(self, pred, target):
+        """
+        输入:
+            pred:   预测热图 [B, K, H, W]
+            target: 目标热图 [B, K, H, W]
+        输出:
+            加权MSE损失
+        """
+        # 生成权重矩阵
+        weights = self.beta * target + (1 - self.beta) * (1 - target)
+
+        # 计算加权MSE
+        loss = weights * (pred - target) ** 2
+
+        # 按关键点数量归一化
+        valid_keypoints = torch.sum(target.view(target.size(0), target.size(1), -1), dim=-1) > 0
+        num_valid = torch.sum(valid_keypoints) + self.eps
+
+        return torch.sum(loss) / num_valid
+
+
+class Criterion(nn.Module):
+    """总损失函数封装"""
+
     def __init__(self):
         super().__init__()
-        self.criterion = nn.BCEWithLogitsLoss()
+        self.seg_loss = SegmentationLoss()
+        self.pose_loss = PoseEstimationLoss()
+        self.adaptive_loss = AdaptiveMultiTaskLoss()
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            logits: [B,1,H,W]  原始分割输出
-            targets: [B,1,H,W] 二值GT掩码
-        Returns:
-            loss: 标量张量
-        """
-        return self.criterion(logits, targets)
+    def forward(self, seg_pred, seg_gt, pose_pred, pose_gt):
+        l_seg = self.seg_loss(seg_pred, seg_gt)
+        l_pose = self.pose_loss(pose_pred, pose_gt)
+        return self.adaptive_loss([l_seg, l_pose])
 
-
-class PoseLoss(nn.Module):
-    """
-    姿态估计损失，包含关键点热图的MSE和PAF的L1
-    """
-    def __init__(self):
-        super().__init__()
-        self.heatmap_loss = nn.MSELoss()
-        self.paf_loss     = nn.L1Loss()
-
-    def forward(self,
-                pred_heatmaps: torch.Tensor,
-                gt_heatmaps:   torch.Tensor,
-                pred_pafs:     torch.Tensor,
-                gt_pafs:       torch.Tensor
-               ) -> torch.Tensor:
-        """
-        Args:
-            pred_heatmaps: [B,K,H',W']  预测热图
-            gt_heatmaps:   [B,K,H',W']  GT热图
-            pred_pafs:     [B,2L,H',W'] 预测PAF
-            gt_pafs:       [B,2L,H',W'] GTPAF
-        Returns:
-            loss: 标量张量
-        """
-        loss_hm  = self.heatmap_loss(pred_heatmaps, gt_heatmaps)
-        loss_paf = self.paf_loss(pred_pafs,     gt_pafs)
-        return loss_hm + loss_paf
-
-
-class TotalLoss(nn.Module):
-    """
-    总损失 = lambda_seg * 分割损失 + lambda_pose * 姿态损失
-    """
-    def __init__(self, lambda_seg: float = 1.0, lambda_pose: float = 1.0):
-        super().__init__()
-        self.seg_loss   = SegmentationLoss()
-        self.pose_loss  = PoseLoss()
-        self.lambda_seg = lambda_seg
-        self.lambda_pose= lambda_pose
-
-    def forward(self,
-                seg_logits:   torch.Tensor,
-                seg_targets:  torch.Tensor,
-                heatmaps:     torch.Tensor,
-                gt_heatmaps:  torch.Tensor,
-                pafs:         torch.Tensor,
-                gt_pafs:      torch.Tensor
-               ) -> torch.Tensor:
-        """
-        Args:
-            seg_logits:  [B,1,H,W]      分割网络原始输出
-            seg_targets: [B,1,H,W]      分割GT
-            heatmaps:    [B,K,H',W']    预测热图
-            gt_heatmaps: [B,K,H',W']    GT热图
-            pafs:        [B,2L,H',W']   预测PAF
-            gt_pafs:     [B,2L,H',W']   GTPAF
-        Returns:
-            loss: 综合标量损失
-        """
-        loss_s = self.seg_loss(seg_logits, seg_targets)
-        loss_p = self.pose_loss(heatmaps, gt_heatmaps, pafs, gt_pafs)
-        return self.lambda_seg * loss_s + self.lambda_pose * loss_p
-
-
-class HeatmapLoss(nn.Module):
-    def __init__(self, reduction='mean'):
-        super().__init__()
-        self.mse = nn.MSELoss(reduction=reduction)
-
-    def forward(self, pred_heatmap, gt_heatmap):
-        # 先做 sigmoid -> [B,K,H',W']
-        pred_prob = torch.sigmoid(pred_heatmap)
-        # 如果预测和 GT 分辨率不一样，重采样到 GT 大小
-        if pred_prob.shape[2:] != gt_heatmap.shape[2:]:
-            pred_prob = F.interpolate(
-                pred_prob,
-                size=gt_heatmap.shape[2:],
-                mode='bilinear',
-                align_corners=False
-            )
-
-        return self.mse(pred_prob, gt_heatmap)
-
-
-class PAFLoss(nn.Module):
-    def __init__(self, reduction='mean'):
-        super().__init__()
-        self.l1 = nn.L1Loss(reduction=reduction)
-
-    def forward(self, pred_paf, gt_paf):
-        # 如果预测 PAF 尺寸与 GT 不匹配，先重采样
-        if pred_paf.shape[2:] != gt_paf.shape[2:]:
-            pred_paf = F.interpolate(
-                pred_paf,
-                size=gt_paf.shape[2:],
-                mode='bilinear',
-                align_corners=False
-            )
-        return self.l1(pred_paf, gt_paf)
-
-
-class MultiTaskLoss(nn.Module):
-    """
-    Combine segmentation, heatmap, and PAF losses.
-    """
-
-    def __init__(self,
-                 weight_seg: float = 1.0,
-                 weight_hm: float = 1.0,
-                 weight_paf: float = 1.0,
-                 pos_weight: torch.Tensor = None):
-        super().__init__()
-        self.seg_loss = SegmentationLoss(pos_weight=pos_weight)
-        self.hm_loss = HeatmapLoss()
-        self.paf_loss = PAFLoss()
-        self.w_seg = weight_seg
-        self.w_hm = weight_hm
-        self.w_paf = weight_paf
-
-    def forward(self,
-                pred_seg: torch.Tensor,
-                gt_mask: torch.Tensor,
-                pred_hm: torch.Tensor,
-                gt_hm: torch.Tensor,
-                pred_paf: torch.Tensor,
-                gt_paf: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            pred_seg: logits [B,1,H,W]
-            gt_mask:  [B,1,H,W]
-            pred_hm:  [B,K,h,w]
-            gt_hm:    [B,K,h,w]
-            pred_paf: [B,2L,h,w]
-            gt_paf:   [B,2L,h,w]
-
-        Returns:
-            total_loss, dict of individual losses
-        """
-        loss_seg = self.seg_loss(pred_seg, gt_mask)
-        loss_hm = self.hm_loss(pred_hm, gt_hm)
-        loss_paf = self.paf_loss(pred_paf, gt_paf)
-        total = self.w_seg * loss_seg + self.w_hm * loss_hm + self.w_paf * loss_paf
-        return total, {"loss_seg": loss_seg, "loss_hm": loss_hm, "loss_paf": loss_paf}
-
-
-class DistillationLoss(nn.Module):
-    def __init__(self, alpha=1.0, beta=1.0, gamma=1.0):
-        super().__init__()
-        self.alpha = alpha
-        self.beta  = beta
-        self.gamma = gamma
-
-    def forward(self, student_outputs, teacher_outputs, targets):
-        """
-        student_outputs: (s_seg, s_hm, s_paf)
-        teacher_outputs: (t_seg, t_hm, t_paf) (已 detach)
-        targets: (gt_mask, gt_kps_list, gt_vis_list)
-        """
-        s_seg, s_hm, s_paf = student_outputs
-        t_seg, t_hm, t_paf = teacher_outputs
-        gt_mask, gt_kps, gt_vis = targets
-
-        # —— 分割蒸馏 ——
-        t_prob = torch.sigmoid(t_seg.detach())
-        # 对齐空间
-        target_size = gt_mask.shape[2:]
-        if s_seg.shape[2:] != target_size:
-            s_seg = F.interpolate(s_seg, size=target_size, mode='bilinear', align_corners=False)
-        if t_prob.shape[2:] != target_size:
-            t_prob = F.interpolate(t_prob, size=target_size, mode='bilinear', align_corners=False)
-        seg_loss = F.binary_cross_entropy_with_logits(s_seg, t_prob)
-
-        # —— 热力图蒸馏 ——
-        hm_pred = torch.sigmoid(s_hm)
-        hm_tgt  = torch.sigmoid(t_hm.detach())
-        # 对齐通道数
-        C_pred, C_tgt = hm_pred.shape[1], hm_tgt.shape[1]
-        if C_pred > C_tgt:
-            hm_pred = hm_pred[:, :C_tgt]
-        elif C_pred < C_tgt:
-            pad = torch.zeros(hm_pred.size(0), C_tgt - C_pred,
-                              hm_pred.size(2), hm_pred.size(3),
-                              device=hm_pred.device, dtype=hm_pred.dtype)
-            hm_pred = torch.cat([hm_pred, pad], dim=1)
-        # 对齐空间
-        if hm_pred.shape[2:] != hm_tgt.shape[2:]:
-            hm_pred = F.interpolate(hm_pred, size=hm_tgt.shape[2:], mode='bilinear', align_corners=False)
-        if hm_tgt.shape[2:] != hm_pred.shape[2:]:
-            hm_tgt = F.interpolate(hm_tgt, size=hm_pred.shape[2:], mode='bilinear', align_corners=False)
-        hm_loss = F.mse_loss(hm_pred, hm_tgt)
-
-        # —— PAF 蒸馏 ——
-        paf_pred = s_paf
-        paf_tgt  = t_paf.detach()
-        # 对齐通道数
-        C_pred, C_tgt = paf_pred.shape[1], paf_tgt.shape[1]
-        if C_pred > C_tgt:
-            paf_pred = paf_pred[:, :C_tgt]
-        elif C_pred < C_tgt:
-            pad = torch.zeros(paf_pred.size(0), C_tgt - C_pred,
-                              paf_pred.size(2), paf_pred.size(3),
-                              device=paf_pred.device, dtype=paf_pred.dtype)
-            paf_pred = torch.cat([paf_pred, pad], dim=1)
-        # 对齐空间
-        if paf_pred.shape[2:] != paf_tgt.shape[2:]:
-            paf_pred = F.interpolate(paf_pred, size=paf_tgt.shape[2:], mode='bilinear', align_corners=False)
-        paf_loss = F.l1_loss(paf_pred, paf_tgt)
-
-        total_loss = self.alpha * seg_loss \
-                   + self.beta  * hm_loss  \
-                   + self.gamma * paf_loss
-
-        return total_loss, {
-            'seg_loss'     : seg_loss,
-            'hm_loss'      : hm_loss,
-            'paf_loss'     : paf_loss,
-            'distill_loss': total_loss
-        }
+criterion = Criterion()
