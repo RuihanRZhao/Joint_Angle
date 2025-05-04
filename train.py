@@ -76,157 +76,205 @@ def log_samples(seg_gts, seg_preds, pose_gts, pose_preds, original_sizes, epoch,
 
 def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # COCO 骨骼关键点注释文件路径
     ann_file = os.path.join(args.data_dir, "annotations", "person_keypoints_val2017.json")
 
     # 数据加载
-    train_s = prepare_coco_dataset(args.data_dir, 'train', args.max_samples)
-    val_s   = prepare_coco_dataset(args.data_dir, 'val',   args.max_samples)
-    train_loader = DataLoader(COCODataset(train_s), batch_size=args.batch_size,
-                              shuffle=True, num_workers=args.num_workers,
-                              pin_memory=True, collate_fn=collate_fn)
-    val_loader   = DataLoader(COCODataset(val_s),   batch_size=args.batch_size,
-                              shuffle=False,num_workers=args.num_workers,
-                              pin_memory=True, collate_fn=collate_fn)
+    train_s = prepare_coco_dataset(args.data_dir, split='train', max_samples=args.max_samples)
+    val_s   = prepare_coco_dataset(args.data_dir, split='val',   max_samples=args.max_samples)
+    train_loader = DataLoader(
+        COCODataset(train_s), batch_size=args.batch_size,
+        shuffle=True,  num_workers=args.num_workers,
+        pin_memory=True, collate_fn=collate_fn
+    )
+    val_loader   = DataLoader(
+        COCODataset(val_s),   batch_size=args.batch_size,
+        shuffle=False, num_workers=args.num_workers,
+        pin_memory=True, collate_fn=collate_fn
+    )
 
-    # 模型等
-    model = SegmentKeypointModel().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = CosineAnnealingWarmupRestarts(
+    # 模型、优化器、调度器、AMP、EarlyStopping
+    model      = SegmentKeypointModel().to(device)
+    optimizer  = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler  = CosineAnnealingWarmupRestarts(
         optimizer,
-        first_cycle_steps=args.epochs*len(train_loader),
-        cycle_mult=1.0, max_lr=args.lr, min_lr=1e-6,
-        warmup_steps=args.warmup_epochs*len(train_loader),
-        gamma=1.0)
-    scaler = GradScaler(enabled=args.use_fp16)
+        first_cycle_steps=args.epochs * len(train_loader),
+        cycle_mult=1.0,
+        max_lr=args.lr,
+        min_lr=1e-6,
+        warmup_steps=args.warmup_epochs * len(train_loader),
+        gamma=1.0
+    )
+    scaler     = GradScaler(enabled=args.use_fp16)
     early_stop = EarlyStopping(patience=args.patience, delta=args.min_delta)
-    post_proc = PosePostProcessor()
+    post_proc  = PosePostProcessor()
 
+    # WandB 初始化
     wandb.init(project=args.project_name, config=vars(args), entity=args.entity)
 
     best_ap = -float('inf')
 
-    for epoch in range(1, args.epochs+1):
-        # —— 训练 ——
+    for epoch in range(1, args.epochs + 1):
+        # —— 训练阶段 —— #
         t0 = time.time()
-        model.train(); train_loss=0.0
+        model.train()
+        train_loss = 0.0
         pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch}/{args.epochs} [Train]")
-        for i, (imgs, masks, hm, paf, _,_,_) in enumerate(train_loader,1):
+
+        for batch_idx, (imgs, masks, hm, paf, _, _, _) in enumerate(train_loader, start=1):
             bs = time.time()
-            imgs,masks,hm,paf = imgs.to(device),masks.to(device),hm.to(device),paf.to(device)
+            imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
+
             optimizer.zero_grad()
             if args.use_fp16:
-                with autocast(device_type='cuda',enabled=True):
-                    seg_pred,pose_pred = model(imgs)
-                    loss = criterion(seg_pred,masks,pose_pred,hm,paf)
+                with autocast(device_type='cuda', enabled=True):
+                    seg_pred, pose_pred = model(imgs)
+                    loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 scaler.scale(loss).backward()
-                scaler.step(optimizer); scaler.update()
+                scaler.step(optimizer)
+                scaler.update()
             else:
-                seg_pred,pose_pred = model(imgs)
-                loss = criterion(seg_pred,masks,pose_pred,hm,paf)
-                loss.backward(); optimizer.step()
+                seg_pred, pose_pred = model(imgs)
+                loss = criterion(seg_pred, masks, pose_pred, hm, paf)
+                loss.backward()
+                optimizer.step()
+
             scheduler.step()
             train_loss += loss.item()
-            bt = time.time()-bs
-            lr = optimizer.param_groups[0]['lr']
-            gn = sum(p.grad.norm(2).item()**2 for p in model.parameters() if p.grad is not None)**0.5
-            wandb.log({'train/batch_loss':loss.item(),
-                       'train/lr':lr,
-                       'train/grad_norm':gn,
-                       'train/batch_time':bt},
-                      step=(epoch-1)*len(train_loader)+i)
-            pbar.update(1); pbar.set_postfix({'loss':f"{loss.item():.4f}",
-                                              'lr':f"{lr:.2e}",
-                                              'bt':f"{bt:.2f}s"})
-        pbar.close()
-        avg_train = train_loss/len(train_loader)
-        tr_time = time.time()-t0
 
-        # —— 验证 ——
-        v0=time.time()
-        model.eval(); val_loss=0.0
-        all_pred_masks,all_gt_masks=[],[]
-        all_pred_kps,all_gt_kps=[],[]
-        sample_seg_gts,sample_seg_preds=[],[]
-        sample_pose_gts,sample_pose_preds=[],[]
-        orig_sizes=[]
+            # Batch 级日志
+            bt       = time.time() - bs
+            lr       = optimizer.param_groups[0]['lr']
+            grad_norm = sum(p.grad.norm(2).item()**2 for p in model.parameters() if p.grad is not None)**0.5
+
+            wandb.log({
+                'train/batch_loss': loss.item(),
+                'train/lr': lr,
+                'train/grad_norm': grad_norm,
+                'train/batch_time': bt
+            }, step=(epoch-1)*len(train_loader) + batch_idx)
+
+            pbar.update(1)
+            pbar.set_postfix({
+                'loss': f"{loss.item():.4f}",
+                'lr': f"{lr:.2e}",
+                'bt': f"{bt:.2f}s"
+            })
+
+        pbar.close()
+        avg_train_loss = train_loss / len(train_loader)
+        train_time     = time.time() - t0
+
+        # —— 验证 & 评估阶段 —— #
+        v0 = time.time()
+        model.eval()
+        val_loss = 0.0
+
+        all_pred_masks, all_gt_masks = [], []
+        all_heatmaps = []  # 原始预测 heatmaps
+        all_gt_kps   = []  # 仅用于 sample 可视化
+        sample_seg_gts, sample_seg_preds = [], []
+        sample_pose_gts, sample_pose_preds = [], []
+        orig_sizes = []
 
         with torch.no_grad():
-            for imgs,masks,hm,paf,_,_,sizes in val_loader:
-                imgs,masks,hm,paf = imgs.to(device),masks.to(device),hm.to(device),paf.to(device)
-                with autocast(device_type='cuda',enabled=args.use_fp16):
-                    seg_pred,pose_pred = model(imgs)
-                    loss = criterion(seg_pred,masks,pose_pred,hm,paf)
+            for imgs, masks, hm, paf, _, _, sizes in val_loader:
+                imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
+
+                with autocast(device_type='cuda', enabled=args.use_fp16):
+                    seg_pred, pose_pred = model(imgs)
+                    loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 val_loss += loss.item()
-                pm = (torch.sigmoid(seg_pred)>0.5).cpu().numpy()
+
+                # 收集分割结果
+                pm = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy()
                 for b in range(pm.shape[0]):
-                    h,w = masks[b,0].shape
+                    h, w = masks[b,0].shape
                     m_uint8 = pm[b,0].astype(np.uint8)
-                    m_res = cv2.resize(m_uint8,(int(w),int(h)),interpolation=cv2.INTER_NEAREST)
-                    all_pred_masks.append(m_res); all_gt_masks.append(masks[b,0].cpu().numpy())
-                    sample_seg_gts.append(masks[b]); sample_seg_preds.append(seg_pred[b])
-                    sample_pose_gts.append(hm[b]); sample_pose_preds.append(pose_pred[b])
-                    orig_sizes.append((h,w))
-                # keypoints
-                pred_kps = post_proc(pose_pred.cpu())
-                gt_kps   = post_proc(hm.cpu())
-                all_pred_kps.extend(pred_kps); all_gt_kps.extend(gt_kps)
+                    m_res   = cv2.resize(m_uint8, (int(w), int(h)), interpolation=cv2.INTER_NEAREST)
+                    all_pred_masks.append(m_res)
+                    all_gt_masks.append(masks[b,0].cpu().numpy())
 
-        avg_val = val_loss/len(val_loader)
-        vl_time = time.time()-v0
+                    # for sample 可视化
+                    sample_seg_gts.append(masks[b])
+                    sample_seg_preds.append(seg_pred[b])
+                    sample_pose_gts.append(hm[b])
+                    sample_pose_preds.append(pose_pred[b])
+                    orig_sizes.append((h, w))
 
-        # —— 评估指标 ——
+                # 收集原始 heatmap
+                all_heatmaps.extend(pose_pred.cpu().numpy())
+                # 收集 gt heatmap 后处理结果（仅做可视化，非评估）
+                all_gt_kps.extend(post_proc(hm.cpu()))
+
+        avg_val_loss = val_loss / len(val_loader)
+        val_time     = time.time() - v0
+
+        # 分割 mIoU 评估
         seg_eval = SegmentationEvaluator(num_classes=2)
-        for pm,gt in zip(all_pred_masks,all_gt_masks):
-            seg_eval.update(torch.from_numpy(pm).unsqueeze(0).unsqueeze(0),
-                            torch.from_numpy(gt).unsqueeze(0).unsqueeze(0))
+        for pm, gt in zip(all_pred_masks, all_gt_masks):
+            pm_t = torch.from_numpy(pm).unsqueeze(0).unsqueeze(0)
+            gt_t = torch.from_numpy(gt).unsqueeze(0).unsqueeze(0)
+            seg_eval.update(pm_t, gt_t)
         seg_iou = seg_eval.compute_miou()
 
+        # 关键点 AP 评估
         pose_eval = PoseEvaluator(ann_file, COCO_KEYPOINT_NAMES)
-        # 构造 preds list (img_id, heatmaps, scores)
-        preds=[]
-        for img_id, persons in enumerate(all_pred_kps):
-            avg_score = np.mean([p[2] if len(p)>2 else 1.0 for person in persons for p in person])
-            preds.append((img_id, persons, avg_score))
-        pose_eval.update(preds, None)
+        batch_preds = []
+        for img_id, hm_arr in enumerate(all_heatmaps):
+            # 每个通道最大值作为该关键点的 score
+            scores = hm_arr.max(axis=(1,2)).tolist()
+            batch_preds.append((img_id, hm_arr, scores))
+        pose_eval.update(batch_preds, None)
         kp_acc = pose_eval.compute_ap()
 
-        # —— 保存最佳模型 ——
+        # 自动保存最佳模型（按 kp_acc）
         if kp_acc > best_ap:
             best_ap = kp_acc
-            best_path = os.path.join(args.output_dir,"best_model.pth")
-            torch.save(model.state_dict(),best_path)
-            art = wandb.Artifact(name="best-keypoint-model", type="model",
-                                 description=f"Epoch {epoch}, kp_acc={best_ap:.4f}")
-            art.add_file(best_path)
-            art.metadata = {"epoch":epoch,"seg_iou":seg_iou,"kp_acc":kp_acc}
-            wandb.log_artifact(art, aliases=["best-keypoint"])
-            wandb.run.summary["best_kp_acc"]=best_ap
+            best_path = os.path.join(args.output_dir, "best_model.pth")
+            torch.save(model.state_dict(), best_path)
 
-        # —— WandB Epoch 日志 ——
+            art = wandb.Artifact(
+                name=f"best-keypoint-model",
+                type="model",
+                description=f"Epoch {epoch}, kp_acc={best_ap:.4f}"
+            )
+            art.add_file(best_path)
+            art.metadata = {"epoch": epoch, "seg_iou": seg_iou, "kp_acc": kp_acc}
+            wandb.log_artifact(art, aliases=["best-keypoint"])
+            wandb.run.summary["best_kp_acc"] = best_ap
+
+        # Epoch 级日志
         wandb.log({
-            'train/avg_loss': avg_train,
-            'val/avg_loss':   avg_val,
-            'train/epoch_time': tr_time,
-            'val/epoch_time':   vl_time,
+            'train/avg_loss':   avg_train_loss,
+            'val/avg_loss':     avg_val_loss,
+            'train/epoch_time': train_time,
+            'val/epoch_time':   val_time,
             'val/seg_iou':      seg_iou,
             'val/kp_accuracy':  kp_acc,
-            **{f"model/{n.replace('.', '/')}_hist": wandb.Histogram(p.detach().cpu().numpy())
-               for n,p in model.named_parameters()}
+            **{
+                f"model/{n.replace('.', '/')}_hist": wandb.Histogram(p.detach().cpu().numpy())
+                for n, p in model.named_parameters()
+            }
         }, step=epoch)
 
         # 样本可视化
-        log_samples(sample_seg_gts, sample_seg_preds,
-                    sample_pose_gts, sample_pose_preds,
-                    orig_sizes, epoch)
+        log_samples(
+            sample_seg_gts, sample_seg_preds,
+            sample_pose_gts, sample_pose_preds,
+            orig_sizes, epoch
+        )
 
-        if early_stop(avg_val, model):
+        if early_stop(avg_val_loss, model):
             print("Early stopping triggered")
             break
 
-    # 最终保存
+    # 最终模型保存
     os.makedirs(args.output_dir, exist_ok=True)
-    torch.save(model.state_dict(), os.path.join(args.output_dir,"model_final.pth"))
+    torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pth"))
     destroy_process_group()
+
 
 
 if __name__ == "__main__":
