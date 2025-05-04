@@ -223,13 +223,15 @@ def train(args):
             seg_eval.update(pm_t, gt_t)
         seg_iou = seg_eval.compute_miou()
 
-        # —— 关键点 AP 评估 —— #
+        # —— 关键点 AP 评估 ——
         pose_eval = PoseEvaluator(ann_file, COCO_KEYPOINT_NAMES)
         batch_preds = []
         for img_id, hm_arr in enumerate(all_heatmaps):
-            # numpy array shape (C, H, W)
-            scores = hm_arr.max(axis=(1,2))  # ndarray, supports .mean()
-            batch_preds.append((img_id, hm_arr, scores))
+            # 先用 postprocessor 得到每个人的关键点坐标列表
+            persons = post_proc(torch.from_numpy(hm_arr).unsqueeze(0))[0]
+            # 给每个检测到的人一个统一置信度
+            scores = [1.0] * len(persons)
+            batch_preds.append((img_id, persons, scores))
         pose_eval.update(batch_preds, None)
         kp_acc = pose_eval.compute_ap()
 
