@@ -165,6 +165,15 @@ class PosePostProcessor(nn.Module):
         return output
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
+
+from models.RepGhostBottleneck import RepGhostBottleneck
+from models.CoordinateAttention import CoordinateAttention
+from models.SegKP_Model import PosePostProcessor  # 如有需要调整导入路径
+
 class SegmentKeypointModel(nn.Module):
     def __init__(self):
         super().__init__()
@@ -198,32 +207,53 @@ class SegmentKeypointModel(nn.Module):
             nn.Conv2d(256, 256, 3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 51, 1)  # 17个关键点
+            nn.Conv2d(256, 51, 1)  # 17个关键点 * 3 维度？
         )
 
         self.postprocessor = PosePostProcessor()  # 你自己的后处理
 
     def forward(self, x):
-        features = self.features(x)
+        # 逐层提取特征并保留指定 out_indices 的输出
+        feats = []
+        h = x
+        for idx, layer in enumerate(self.features):
+            h = layer(h)
+            if idx in self.out_indices:
+                feats.append(h)
+
+        # 将所有 feats 上采样到同样的空间尺寸（这里以 feats[0] 为基准）
+        target_size = feats[0].shape[2:]
+        feats = [
+            F.interpolate(f, size=target_size, mode='bilinear', align_corners=False)
+            for f in feats
+        ]
+
+        # 拼接和通道对齐
+        fused = torch.cat(feats, dim=1)
+        fused = self.fuse_conv(fused)
+
+        # 分割输出
         seg_logits = F.interpolate(
-            self.seg_head(features),
+            self.seg_head(fused),
             scale_factor=32,
             mode='bilinear',
             align_corners=True
         )
+
+        # 姿态预测（训练返回热图，推理返回关键点）
         pose_pred = F.interpolate(
-            self.pose_head(features),
+            self.pose_head(fused),
             scale_factor=32,
             mode='bilinear',
             align_corners=True
         )
-        # 训练时直接返回张量
+
         if self.training:
             return seg_logits, pose_pred
-        # 推理时返回关键点坐标
         else:
             multi_kps = self.postprocessor(pose_pred)
             return seg_logits, multi_kps
+
 
 
 if __name__ == "__main__":
