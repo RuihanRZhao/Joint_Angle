@@ -57,9 +57,15 @@ class PoseEvaluator:
             v = np.ones(len(kps_arr), dtype=np.float32)  # 全部可见
 
             coco_kp = []
-            for kp_name in self.keypoints:
-                idx = self.keypoints.index(kp_name)
-                coco_kp.extend([float(x[idx]), float(y[idx]), float(v[idx])])
+            for idx, kp_name in enumerate(self.keypoints):
+                # 如果预测列表里没有这个关节点则填 0
+                if idx < kps_arr.shape[0]:
+                    x_val = float(x[idx])
+                    y_val = float(y[idx])
+                    v_val = float(v[idx])
+                else:
+                    x_val = y_val = v_val = 0.0
+                coco_kp.extend([x_val, y_val, v_val])
 
             coco_kps.append({
                 "image_id": int(image_id),
@@ -75,11 +81,12 @@ class PoseEvaluator:
             # 从 heatmap 中提取每个人的关键点坐标
             keypoints = []
             for hm in heatmaps:
+                # 假设 hm 是热图，找到最大响应的位置
                 y, x = np.unravel_index(np.argmax(hm), hm.shape)
                 keypoints.append([x, y])
 
             # 统一得分
-            mean_score = sum(scores) / len(scores)
+            mean_score = float(sum(scores) / len(scores))
 
             # 转换并累加到结果列表
             self.results.extend(
@@ -103,25 +110,3 @@ class PoseEvaluator:
         coco_eval.accumulate()
         coco_eval.summarize()
         return coco_eval.stats[0]  # AP@[0.5:0.95]
-
-
-# 使用示例
-if __name__ == "__main__":
-    # 分割评估示例
-    seg_eval = SegmentationEvaluator(num_classes=2)
-    seg_logits = torch.randn(2, 1, 256, 256)  # 模拟模型输出
-    seg_gt = torch.randint(0, 2, (2, 1, 256, 256))  # 模拟真实标签
-    seg_eval.update(seg_logits, seg_gt)
-    print(f"Segmentation mIoU: {seg_eval.compute_miou():.4f}")
-
-    # 姿态评估示例
-    coco_keypoints = ['nose', 'left_shoulder', 'right_shoulder']  # 示例关键点
-    pose_eval = PoseEvaluator('path/to/annotations.json', coco_keypoints)
-
-    # 模拟预测结果 (image_id, heatmaps, scores)
-    fake_preds = [
-        (0, np.random.rand(3, 64, 64), [0.9, 0.9, 0.9]),
-        (1, np.random.rand(3, 64, 64), [0.8, 0.8, 0.8])
-    ]
-    pose_eval.update(fake_preds, None)
-    print(f"Pose AP: {pose_eval.compute_ap():.4f}")
