@@ -45,32 +45,54 @@ def create_pose_visual(kps_list, image_size, skeleton):
 
 
 def log_samples(seg_gts, seg_preds, pose_gts, pose_preds, original_sizes, epoch, skeleton=SKELETON):
-    table = wandb.Table(columns=["GT Segmentation","Pred Segmentation","GT Keypoints","Pred Keypoints"])
+    table = wandb.Table(columns=[
+        "GT Segmentation", "Pred Segmentation",
+        "GT Keypoints", "Pred Keypoints"
+    ])
     post_proc = PosePostProcessor()
-    inds = random.sample(range(len(seg_gts)), min(2,len(seg_gts)))
+    inds = random.sample(range(len(seg_gts)), min(2, len(seg_gts)))
     for idx in inds:
         h, w = original_sizes[idx]
-        # Seg
+        # —— Segmentation 可视化 —— #
         gt_mask = seg_gts[idx].cpu().numpy().squeeze()
-        gt_mask = cv2.resize(gt_mask, (w,h), interpolation=cv2.INTER_NEAREST)
+        gt_mask = cv2.resize(gt_mask, (w, h), interpolation=cv2.INTER_NEAREST)
         gt_vis = create_mask_visual(gt_mask)
-        pred_logit = seg_preds[idx].cpu().numpy().squeeze()
-        pred_mask = cv2.resize(pred_logit, (w,h), interpolation=cv2.INTER_LINEAR)
-        pred_mask = (torch.sigmoid(torch.from_numpy(pred_mask))>0.5).numpy()
+
+        pred_logit = seg_preds[idx].cpu().detach().numpy().squeeze()
+        pred_mask = cv2.resize(pred_logit, (w, h), interpolation=cv2.INTER_LINEAR)
+        pred_mask = (torch.sigmoid(torch.from_numpy(pred_mask)) > 0.5).numpy()
         pred_vis = create_mask_visual(pred_mask)
-        # Pose
-        gt_hm = pose_gts[idx].cpu().numpy()
-        gt_hm = torch.nn.functional.interpolate(torch.from_numpy(gt_hm).unsqueeze(0),
-                                                size=(h,w), mode='bilinear', align_corners=False)[0].numpy()
-        gt_kps = post_proc(gt_hm[None])[0]
-        gt_pose = create_pose_visual(gt_kps,(h,w),skeleton)
-        pred_hm = pose_preds[idx].cpu().numpy()
-        pred_hm = torch.nn.functional.interpolate(torch.from_numpy(pred_hm).unsqueeze(0),
-                                                  size=(h,w), mode='bilinear', align_corners=False)[0].numpy()
-        pred_kps = post_proc(pred_hm[None])[0]
-        pred_pose = create_pose_visual(pred_kps,(h,w),skeleton)
-        table.add_data(wandb.Image(gt_vis), wandb.Image(pred_vis),
-                       wandb.Image(gt_pose), wandb.Image(pred_pose))
+
+        # —— Pose 可视化 —— #
+        # 1) GT heatmap
+        gt_hm = pose_gts[idx]  # already a tensor [K, Hc, Wc]
+        # resize to original image size
+        gt_hm = torch.nn.functional.interpolate(
+            gt_hm.unsqueeze(0),
+            size=(h, w),
+            mode='bilinear',
+            align_corners=False
+        )[0]  # back to [K, H, W]
+        gt_kps = post_proc(gt_hm.unsqueeze(0))[0]
+        gt_pose = create_pose_visual(gt_kps, (h, w), skeleton)
+
+        # 2) Pred heatmap
+        pred_hm = pose_preds[idx]
+        pred_hm = torch.nn.functional.interpolate(
+            pred_hm.unsqueeze(0),
+            size=(h, w),
+            mode='bilinear',
+            align_corners=False
+        )[0]
+        pred_kps = post_proc(pred_hm.unsqueeze(0))[0]
+        pred_pose = create_pose_visual(pred_kps, (h, w), skeleton)
+
+        # —— 添加到 WandB 表格 —— #
+        table.add_data(
+            wandb.Image(gt_vis), wandb.Image(pred_vis),
+            wandb.Image(gt_pose), wandb.Image(pred_pose)
+        )
+
     wandb.log({f"Validation Samples Epoch {epoch}": table}, step=epoch)
 
 
