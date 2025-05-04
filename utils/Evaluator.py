@@ -90,9 +90,17 @@ class PoseEvaluator:
 
     def compute_ap(self):
         """计算 COCO 标准 AP"""
-        coco_dt = self.coco_gt.loadRes(self.results)
+        # 过滤掉不在 COCO GT 中的 image_id
+        valid_ids = set(self.coco_gt.getImgIds())
+        filtered_results = [r for r in self.results if r["image_id"] in valid_ids]
+        if len(filtered_results) < len(self.results):
+            print(f"Warning: Skipped {len(self.results) - len(filtered_results)} results with invalid image_id")
+
+        # 加载并评估
+        coco_dt = self.coco_gt.loadRes(filtered_results)
         coco_eval = COCOeval(self.coco_gt, coco_dt, 'keypoints')
 
+        # 设置 OKS sigma
         coco_eval.params.kpt_oks_sigmas = np.array([
             0.026, 0.025, 0.025, 0.035, 0.035,
             0.079, 0.072, 0.062, 0.107, 0.087,
