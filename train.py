@@ -159,19 +159,18 @@ def train(args):
         patience=args.patience, delta=args.min_delta)
 
     # WandB
-    if args.use_wandb:
-        wandb.init(
-            project=args.project_name,
-            config=vars(args),
-            entity=args.entity,
-            mode='offline' if args.offline_wandb else 'online'
-        )
+    wandb.init(
+        project=args.project_name,
+        config=vars(args),
+        entity=args.entity,
+        mode='offline' if args.offline_wandb else 'online'
+    )
 
     # 训练循环
     for epoch in range(1, args.epochs + 1):
         model.train()
         train_loss = 0.0
-        pbar = tqdm.tqdm(total=len(train_loader), desc=f"Epoch {epoch}/{args.epochs} [Train]")
+        pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch}/{args.epochs} [Train]")
 
         for imgs, masks, hm, paf, _, _, _ in train_loader:
             imgs = imgs.to(device)
