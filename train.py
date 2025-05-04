@@ -230,16 +230,14 @@ def train(args):
                 # —— 分割结果收集 ——
                 pm = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy()
                 for i in range(pm.shape[0]):
-                    # 只取 sizes[i] 的前两项，并强制转为 Python int
-                    h = int(sizes[i][0])
-                    w = int(sizes[i][1])
+                    # 直接从 masks[i] 的 shape 获取 (H, W)
+                    h, w = masks[i, 0].shape
 
                     # 布尔 → uint8，再 resize 回原图大小
-                    mask_bool = pm[i, 0]
-                    mask_uint8 = mask_bool.astype(np.uint8)
+                    mask_uint8 = pm[i, 0].astype(np.uint8)
                     pm_resized = cv2.resize(
                         mask_uint8,
-                        dsize=(w, h),
+                        dsize=(int(w), int(h)),
                         interpolation=cv2.INTER_NEAREST
                     )
 
@@ -247,9 +245,14 @@ def train(args):
                     all_pred_masks.append(pm_resized)
                     all_gt_masks.append(gt_m)
 
+                    gt_m = masks[i, 0].cpu().numpy()
+                    all_pred_masks.append(pm_resized)
+                    all_gt_masks.append(gt_m)
+
                 # —— 关键点结果收集 ——
-                pred_kps = post_processor(pose_pred.cpu().numpy(), sizes)
-                gt_kps = post_processor(hm.cpu().numpy(), sizes)
+                pred_kps = post_processor(pose_pred.cpu().numpy())
+                gt_kps   = post_processor(hm.cpu().numpy())
+
                 all_pred_kps.extend(pred_kps)
                 all_gt_kps.extend(gt_kps)
 
@@ -267,9 +270,9 @@ def train(args):
             torch.save(model.state_dict(), best_model_path)
 
             artifact = wandb.Artifact(
-                name="best-segmentation-model",
+                name="best-keypoint-model",
                 type="model",
-                description=f"Best model at epoch {epoch} with seg_ap={best_ap:.4f}"
+                description=f"Best model at epoch {epoch} with kp_acc={best_ap:.4f}"
             )
             # 添加模型文件到 Artifact
             artifact.add_file(best_model_path)
@@ -277,11 +280,11 @@ def train(args):
             # 你也可以在 metadata 里记录更多信息
             artifact.metadata = {
                 "epoch": epoch,
-                "seg_ap": best_ap,
+                "seg_ap": seg_iou,
                 "kp_acc": kp_acc,
             }
 
-            wandb.log_artifact(artifact, aliases=["best keypoint accuracy"])
+            wandb.log_artifact(artifact, aliases=["best-keypoint"])
             wandb.run.summary["best_kp_acc"] = best_ap
 
 
