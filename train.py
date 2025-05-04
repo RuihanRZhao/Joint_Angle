@@ -26,17 +26,6 @@ from models.SegKP_Model import PosePostProcessor
 from config import arg_test, arg_real
 
 
-def setup(rank, world_size):
-    """初始化分布式训练环境"""
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-
-
-def cleanup():
-    """清理分布式训练环境"""
-    dist.destroy_process_group()
-
 
 def create_mask_visual(mask):
     """创建分割掩膜可视化"""
@@ -69,15 +58,15 @@ def create_pose_visual(kps_list, image_size, skeleton):
 
     return vis
 
+
 def log_samples(
-        seg_gts, seg_preds,
-        pose_gts, pose_preds,
-        original_sizes,  # 原始图像尺寸列表 [(H,W), ...]
-        epoch,
-        skeleton=SKELETON
+    seg_gts, seg_preds,
+    pose_gts, pose_preds,
+    original_sizes,  # 原始图像尺寸列表 [(H,W), ...]
+    epoch,
+    skeleton=SKELETON
 ):
     """记录样本可视化对比结果到WandB"""
-    # 随机选择2个样本
     indices = random.sample(range(len(seg_gts)), min(2, len(seg_gts)))
 
     table = wandb.Table(columns=[
@@ -85,38 +74,32 @@ def log_samples(
         "GT Keypoints", "Pred Keypoints"
     ])
 
-    # 初始化后处理器
     post_processor = PosePostProcessor()
 
     for idx in indices:
-        # 获取原始尺寸
         orig_h, orig_w = original_sizes[idx]
 
-        # 真实分割处理
         gt_mask = seg_gts[idx].cpu().numpy().squeeze()
         gt_mask = cv2.resize(gt_mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
         gt_seg = create_mask_visual(gt_mask)
 
-        # 预测分割处理
         pred_logit = seg_preds[idx].cpu().numpy().squeeze()
         pred_mask = cv2.resize(pred_logit, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
         pred_mask = (torch.sigmoid(torch.from_numpy(pred_mask)) > 0.5).numpy()
         pred_seg = create_mask_visual(pred_mask)
 
-        # 真实关键点处理
         gt_heatmap = pose_gts[idx].cpu().numpy()
-        gt_heatmap = F.interpolate(
+        gt_heatmap = torch.nn.functional.interpolate(
             torch.from_numpy(gt_heatmap).unsqueeze(0),
             size=(orig_h, orig_w),
             mode='bilinear',
             align_corners=False
         )[0].numpy()
-        gt_kps = post_processor(gt_heatmap[None])[0]  # [P,K,2]
+        gt_kps = post_processor(gt_heatmap[None])[0]
         gt_pose = create_pose_visual(gt_kps, (orig_h, orig_w), skeleton)
 
-        # 预测关键点处理
         pred_heatmap = pose_preds[idx].cpu().numpy()
-        pred_heatmap = F.interpolate(
+        pred_heatmap = torch.nn.functional.interpolate(
             torch.from_numpy(pred_heatmap).unsqueeze(0),
             size=(orig_h, orig_w),
             mode='bilinear',
@@ -125,7 +108,6 @@ def log_samples(
         pred_kps = post_processor(pred_heatmap[None])[0]
         pred_pose = create_pose_visual(pred_kps, (orig_h, orig_w), skeleton)
 
-        # 添加到表格
         table.add_data(
             wandb.Image(gt_seg),
             wandb.Image(pred_seg),
@@ -136,11 +118,8 @@ def log_samples(
     wandb.log({f"Validation Samples Epoch {epoch}": table})
 
 
-def main_worker(rank, world_size, args):
-    """每个GPU的工作进程"""
-    # 初始化分布式训练
-    setup(rank, world_size)
-    torch.cuda.set_device(rank)
+def train(args):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 数据集加载
     train_samples = prepare_coco_dataset(
@@ -148,74 +127,64 @@ def main_worker(rank, world_size, args):
     val_samples = prepare_coco_dataset(
         args.data_dir, split='val', max_samples=args.max_samples)
 
-    # 数据加载器
     train_dataset = COCODataset(train_samples)
     val_dataset = COCODataset(val_samples)
 
-    train_sampler = DistributedSampler(
-        train_dataset, num_replicas=world_size, rank=rank)
     train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size, sampler=train_sampler,
-        num_workers=args.num_workers, pin_memory=True, collate_fn=collate_fn)
-
-    val_sampler = DistributedSampler(
-        val_dataset, num_replicas=world_size, rank=rank)
+        train_dataset, batch_size=args.batch_size,
+        shuffle=True, num_workers=args.num_workers,
+        pin_memory=True, collate_fn=collate_fn)
     val_loader = DataLoader(
-        val_dataset, batch_size=args.batch_size, sampler=val_sampler,
-        num_workers=args.num_workers, pin_memory=True, collate_fn=collate_fn)
+        val_dataset, batch_size=args.batch_size,
+        shuffle=False, num_workers=args.num_workers,
+        pin_memory=True, collate_fn=collate_fn)
 
-    # 模型初始化
-    model = SegmentKeypointModel().to(rank)
-    model = DDP(model, device_ids=[rank])
-
-    # 优化器
+    # 模型和优化器
+    model = SegmentKeypointModel().to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=1e-4)
 
     # 学习率调度器
     scheduler = CosineAnnealingWarmupRestarts(
         optimizer,
-        first_cycle_steps=args.epochs,
+        first_cycle_steps=args.epochs * len(train_loader),
         cycle_mult=1.0,
         max_lr=args.lr,
         min_lr=1e-6,
-        warmup_steps=args.warmup_epochs,
+        warmup_steps=args.warmup_epochs * len(train_loader),
         gamma=1.0
     )
 
     # 混合精度
     scaler = GradScaler(device="cuda", enabled=args.use_fp16)
 
-    # EarlyStopping
+    # 提前停止
     early_stopping = EarlyStopping(
         patience=args.patience, delta=args.min_delta)
 
-    # 仅在主进程初始化WandB
-    if rank == 0:
+    # WandB
+    if args.use_wandb:
         wandb.login()
         wandb.init(
-            project=f"{args.project_name}",
+            project=args.project_name,
             config=vars(args),
-            entity=args.entity)
+            entity=args.entity,
+            mode='offline' if args.offline_wandb else 'online'
+        )
 
     # 训练循环
-    for epoch in range(args.epochs):
-        train_sampler.set_epoch(epoch)
-
-        # 训练阶段
+    for epoch in range(1, args.epochs + 1):
         model.train()
         train_loss = 0.0
+        pbar = tqdm.tqdm(total=len(train_loader), desc=f"Epoch {epoch}/{args.epochs} [Train]")
 
-        train_pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}/{args.epochs} [Train]", position=0, leave=True) if rank == 0 else None
-
-        for batch_idx, (imgs, masks, hm, paf, _, _, _) in enumerate(train_loader):
-            imgs = imgs.to(rank)
-            masks = masks.to(rank)
-            hm = hm.to(rank)
-            paf = paf.to(rank)
+        for imgs, masks, hm, paf, _, _, _ in train_loader:
+            imgs = imgs.to(device)
+            masks = masks.to(device)
+            hm = hm.to(device)
+            paf = paf.to(device)
 
             optimizer.zero_grad()
-
             with autocast(device_type="cuda", enabled=args.use_fp16):
                 seg_pred, pose_pred = model(imgs)
                 loss = criterion(seg_pred, masks, pose_pred, hm, paf)
@@ -226,38 +195,28 @@ def main_worker(rank, world_size, args):
             scheduler.step()
 
             train_loss += loss.item()
+            pbar.update(1)
+            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-            if rank == 0:
-                train_pbar.update(1)
-                train_pbar.set_postfix({
-                    "loss": f"{loss.item():.4f}",
-                    "lr": f"{scheduler.get_last_lr()[0]:.2e}"
-                })
+            if args.use_wandb and (pbar.n % args.log_interval == 0):
+                wandb.log({"train/loss": loss.item(), "epoch": epoch})
 
-                if batch_idx % args.log_interval == 0:
-                    wandb.log({"train/loss": loss.item()})
+        pbar.close()
+        avg_train_loss = train_loss / len(train_loader)
 
-        if rank == 0: train_pbar.close()
-
-        # 验证阶段
+        # 验证
         model.eval()
         val_loss = 0.0
-        sample_seg_gts = []
-        sample_seg_preds = []
-        sample_pose_gts = []
-        sample_pose_preds = []
+        sample_seg_gts, sample_seg_preds = [], []
+        sample_pose_gts, sample_pose_preds = [], []
         sample_sizes = []
 
-        val_pbar = tqdm(total=len(val_loader), desc=f"Epoch {epoch + 1}/{args.epochs} [Val]", position=0, leave=False) if rank == 0 else None
-
         with torch.no_grad():
-            for batch in val_loader:
-                mgs, masks, hm, paf, _, _, sizes = batch
-
-                imgs = imgs.to(rank)
-                masks = masks.to(rank)
-                hm = hm.to(rank)
-                paf = paf.to(rank)
+            for imgs, masks, hm, paf, _, _, sizes in val_loader:
+                imgs = imgs.to(device)
+                masks = masks.to(device)
+                hm = hm.to(device)
+                paf = paf.to(device)
 
                 with autocast(device_type="cuda", enabled=args.use_fp16):
                     seg_pred, pose_pred = model(imgs)
@@ -265,50 +224,37 @@ def main_worker(rank, world_size, args):
 
                 val_loss += loss.item()
 
-                if rank == 0:
-                    val_pbar.update(1)
+                if len(sample_seg_gts) < args.val_viz_num:
+                    sample_seg_gts.extend(masks.cpu().unbind())
+                    sample_seg_preds.extend(seg_pred.cpu().unbind())
+                    sample_pose_gts.extend(hm.cpu().unbind())
+                    sample_pose_preds.extend(pose_pred.cpu().unbind())
+                    sample_sizes.extend(sizes)
 
-                    if len(sample_seg_gts) < args.val_viz_num:
-                        sample_seg_gts.extend(masks.cpu().unbind())
-                        sample_seg_preds.extend(seg_pred.cpu().unbind())
-                        sample_pose_gts.extend(hm.cpu().unbind())
-                        sample_pose_preds.extend(pose_pred.cpu().unbind())
-                        sample_sizes.extend(sizes)
+        avg_val_loss = val_loss / len(val_loader)
 
-        if rank == 0:
+        if args.use_wandb:
+            wandb.log({
+                "epoch": epoch,
+                "train/avg_loss": avg_train_loss,
+                "val/avg_loss": avg_val_loss
+            })
             log_samples(
                 seg_gts=sample_seg_gts,
                 seg_preds=sample_seg_preds,
                 pose_gts=sample_pose_gts,
                 pose_preds=sample_pose_preds,
                 original_sizes=sample_sizes,
-                epoch=epoch + 1
+                epoch=epoch
             )
-            val_pbar.close()
 
+        # EarlyStopping检查
+        if early_stopping(avg_val_loss, model):
+            print("Early stopping triggered")
+            break
 
-        # 收集所有进程的损失
-        torch.distributed.reduce(train_loss, dst=0)
-        torch.distributed.reduce(val_loss, dst=0)
-
-        if rank == 0:
-            avg_train_loss = train_loss / (len(train_loader) * world_size)
-            avg_val_loss = val_loss / (len(val_loader) * world_size)
-
-            wandb.log({
-                "epoch": epoch + 1,
-                "train/avg_loss": avg_train_loss,
-                "val/avg_loss": avg_val_loss
-            })
-
-            # EarlyStopping检查
-            early_stopping(avg_val_loss, model)
-            if early_stopping.early_stop:
-                print("Early stopping triggered")
-                break
-
-            # 清理分布式环境
-            cleanup()
+    # 保存最终模型
+    torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pth"))
 
 
 if __name__ == "__main__":
@@ -316,10 +262,5 @@ if __name__ == "__main__":
     # args = arg_real()
 
     # 启动多进程训练
-    world_size = torch.cuda.device_count()
-    mp.spawn(
-        main_worker,
-        args=(world_size, args),
-        nprocs=world_size,
-        join=True
-    )
+    os.makedirs(args.output_dir, exist_ok=True)
+    train(args)
