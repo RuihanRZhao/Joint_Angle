@@ -180,7 +180,7 @@ def train(args):
 
             # 计算指标
             batch_time = time.time() - batch_start
-            current_lr = scheduler.get_last_lr()[0]
+            current_lr = optimizer.param_groups[0]['lr']
             total_norm = sum(p.grad.data.norm(2).item()**2 for p in model.parameters() if p.grad is not None)**0.5
 
             if args.use_wandb:
