@@ -75,33 +75,34 @@ def parse_args():
     parser.add_argument('--output_dir', default='run', help='输出文件目录')
 
     # 训练轮数
-    parser.add_argument('--teacher_epochs', type=int, default=250, help='教师模型训练轮数')
-    parser.add_argument('--student_epochs', type=int, default=100, help='学生蒸馏训练轮数')
+    parser.add_argument('--teacher_epochs', type=int, default=200, help='教师模型训练轮数')
+    parser.add_argument('--student_epochs', type=int, default=120, help='学生蒸馏训练轮数')
 
-    # 大分辨率下的 batch size
-    parser.add_argument('--batch_size', type=int, default=64, help='训练批大小 (480x480 建议 8–16)')
+    # 大分辨率 (480×480) 下的 batch size（单卡）
+    parser.add_argument('--batch_size', type=int, default=48,
+                        help='B200 单卡 180 GB VRAM 实测可跑 48 张；8 GPU 等效 384')
 
     # 学习率
-    parser.add_argument('--lr', type=float, default=1e-4, help='初始学习率')
+    parser.add_argument('--lr', type=float, default=3e-4, help='初始学习率（按 batch 线性放大后略保守）')
 
     # 学习率调度器参数
-    parser.add_argument('--scheduler', choices=['plateau', 'cosine'], default='plateau',
-                        help='学习率调度策略')
+    parser.add_argument('--scheduler', choices=['plateau', 'cosine'], default='cosine',
+                        help='大批量下推荐 CosineAnnealingLR')
     parser.add_argument('--plateau_factor', type=float, default=0.5, help='ReduceLROnPlateau 因子')
     parser.add_argument('--plateau_patience', type=int, default=5, help='ReduceLROnPlateau 耐心轮数')
-    parser.add_argument('--cosine_tmax', type=int, default=100, help='CosineAnnealingLR T_max')
+    parser.add_argument('--cosine_tmax', type=int, default=200, help='CosineAnnealingLR T_max')
     parser.add_argument('--cosine_eta_min', type=float, default=1e-6, help='CosineAnnealingLR 最低学习率')
 
     # EarlyStopping
-    parser.add_argument('--min_delta', type=float, default=1e-5, help='EarlyStopping 最小改进阈值')
-    parser.add_argument('--patience', type=int, default=25, help='EarlyStopping 耐心值（轮）')
-    
+    parser.add_argument('--min_delta', type=float, default=1e-4, help='EarlyStopping 最小改进阈值')
+    parser.add_argument('--patience', type=int, default=20, help='EarlyStopping 耐心值（轮）')
+
     # 混合精度
     parser.add_argument('--use_fp16', action='store_true', default=True, help='启用 torch.cuda.amp 混合精度')
 
-    # Warmup & 可视化
-    parser.add_argument('--warmup_epochs', type=int, default=10, help='线性 warmup 的 epoch 数')
-    parser.add_argument('--val_viz_num', type=int, default=2, help='每轮上传至 WandB 的验证样本数量')
+    # Warm-up & 可视化
+    parser.add_argument('--warmup_epochs', type=int, default=5, help='线性 warm-up 的 epoch 数')
+    parser.add_argument('--val_viz_num', type=int, default=4, help='每轮上传至 WandB 的验证样本数量')
 
     # DataLoader 并行
     parser.add_argument('--num_workers', type=int, default=24, help='DataLoader 并行 worker 数量')
@@ -111,14 +112,13 @@ def parse_args():
 
     # 分布式训练
     parser.add_argument('--local_rank', type=int, default=0, help='分布式训练本地 GPU 编号')
-    parser.add_argument('--dist', action='store_true', help='是否启用分布式训练')
+    parser.add_argument('--dist', action='store_true', default=True, help='是否启用分布式训练')
 
     # WandB
     parser.add_argument('--entity', default='joint_angle', help='WandB 实体名（用户名或团队）')
     parser.add_argument('--device', default=('cuda' if torch.cuda.is_available() else 'cpu'),
                         help='运行设备')
-
-    parser.add_argument('--project_name', default='_model', help='Project名字后缀')
+    parser.add_argument('--project_name', default='_model', help='Project 名字后缀')
 
     return parser.parse_args()
 
@@ -133,6 +133,11 @@ def setup_distributed(args):
         world_size, rank = 1, 0
     return world_size, rank
 
+def is_main_process(args, rank):
+    """
+    仅当：① 未启用 dist；或 ② rank == 0 时返回 True
+    """
+    return (not args.dist) or (rank == 0)
 
 def get_models_and_optim(args, device):
     # Teacher
@@ -338,6 +343,7 @@ if __name__ == '__main__':
     print("========================================")
 
     world_size, rank = setup_distributed(args)
+    is_main = is_main_process(args, rank)
     device = torch.device('cuda', args.local_rank) if args.dist else torch.device(args.device)
 
     # Create output dirs
@@ -364,20 +370,33 @@ if __name__ == '__main__':
                           collate_fn=collate_fn,
                           num_workers=args.num_workers,
                           pin_memory=True)
-    val_ld = DataLoader(val_ds,
-                        batch_size=1,
-                        sampler=sampler(val_ds),
-                        shuffle=False,
-                        collate_fn=collate_fn,
-                        num_workers=args.num_workers,
-                        pin_memory=True)
+
+    val_ld = None
+
+    if is_main:
+        val_ld = DataLoader(val_ds,
+                        batch_size = 1,
+                        shuffle = False,
+                        collate_fn = collate_fn,
+                        num_workers = args.num_workers,
+                        pin_memory = True)
 
     # Models & optimizers
     teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s, scaler= get_models_and_optim(args, device)
 
     if args.dist:
-        teacher = DDP(teacher, device_ids=[args.local_rank])
-        student = DDP(student, device_ids=[args.local_rank])
+        teacher = DDP(
+            teacher,
+            device_ids = [args.local_rank],
+            broadcast_buffers = False,
+            find_unused_parameters = True  # 蒸馏阶段常见
+        )
+        student = DDP(
+            student,
+            device_ids = [args.local_rank],
+            broadcast_buffers = False,
+            find_unused_parameters = True
+        )
 
     seg_fn = SegmentationLoss()
     pose_fn = PoseLoss()  # 同时计算 heatmap MSE + paf L1
@@ -385,122 +404,158 @@ if __name__ == '__main__':
 
 
     # WandB Logger for Teacher
-    logger_t = WandbLogger(f"Teacher{args.project_name}", args.entity, config=vars(args))
+
     try:
+        logger_t = WandbLogger(f"Teacher{args.project_name}", args.entity, config=vars(args))
         best_pck = 0.0
-        best_t = teacher.state_dict()
-        for epoch in trange(1, args.teacher_epochs + 1, desc='Teacher'):
-            # Warmup LR
+        best_t = teacher.state_dict()  # 储存最佳教师权重
+
+        for epoch in trange(1, args.teacher_epochs + 1,
+                            desc='Teacher', disable=not is_main):
+
+            # ① DDP Sampler 换 epoch 种子（确保各 GPU 随机性）
+            if args.dist:
+                train_ld.sampler.set_epoch(epoch)
+
+            # ② Warm-up 线性拉升学习率
             if epoch <= args.warmup_epochs:
                 lr = args.lr * epoch / args.warmup_epochs
                 for g in opt_t.param_groups:
                     g['lr'] = lr
 
-            # Train & validate
+            # ③ 训练一个 epoch
             metrics = run_one_epoch(
                 teacher, train_ld,
                 {'seg': seg_fn, 'pose': pose_fn},
-                optimizer=opt_t, teacher=None, device=device, scaler=scaler
-            )
-            pck_stats = validate_all(
-                student, val_ld, device,
-                coco_gt_json     = os.path.join(args.data_dir, 'annotations', 'person_keypoints_val2017.json'),
-                tmp_results_json = os.path.join(args.output_dir, f'val_results_student_{epoch}.json'),
-                thresh_ratio     = 0.05
+                optimizer=opt_t, teacher=None,
+                device=device, scaler=scaler, args=args
             )
 
-            logger_t.log({**metrics, **pck_stats, 'epoch': epoch}, step=epoch)
+            # ---------- 仅 rank 0 做验证 / 日志 / 可视化 ----------
+            if is_main:
+                # ④ 在验证集上评估 PCK
+                pck_stats = validate_all(
+                    teacher, val_ld, device,
+                    coco_gt_json=os.path.join(
+                        args.data_dir, 'annotations',
+                        'person_keypoints_val2017.json'),
+                    tmp_results_json=os.path.join(
+                        args.output_dir, f'val_results_teacher_{epoch}.json'),
+                    thresh_ratio=0.05
+                )
 
-            # Visualization GT vs Teacher
-            imgs, masks, hm_lbl, paf_lbl, kps, vis, _ = next(iter(val_ld))
-            with torch.no_grad():
-                t_seg_out, t_hm, t_paf, t_multi = teacher(imgs.to(device))
-            vizs = visualize_batch(
-                imgs, masks,
-                t_seg_out, None,
-                t_hm, t_paf, t_multi,
-                s_hm=None, s_paf=None, s_multi=None,
-                kps_list=kps, vis_list=vis,
-                n=args.val_viz_num
-            )
-            for i, d in enumerate(vizs):
-                logger_t.log({
-                    f'viz/teacher_{i}/GT_Segmentation': wandb.Image(d['GT_Segmentation']),
-                    f'viz/teacher_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
-                    f'viz/teacher_{i}/GT_Keypoints': wandb.Image(d['GT_Keypoints']),
-                    f'viz/teacher_{i}/Teacher_Keypoints': wandb.Image(d['Teacher_Keypoints'])
-                }, step=epoch)
+                # ⑤ WandB 记录
+                logger_t.log({**metrics, **pck_stats, 'epoch': epoch}, step=epoch)
 
-            # Save best teacher
-            val_pck = pck_stats['coco/AP50']
-            if val_pck > best_pck:
+                # ⑥ 可视化若干样本
+                imgs, masks, hm_lbl, paf_lbl, kps, vis, _ = next(iter(val_ld))
+                with torch.no_grad():
+                    t_seg_out, t_hm, t_paf, t_multi = teacher(imgs.to(device))
+                vizs = visualize_batch(
+                    imgs, masks,
+                    t_seg_out, None,
+                    t_hm, t_paf, t_multi,
+                    n=args.val_viz_num,
+                    kps_list=kps, vis_list=vis
+                )
+                for i, d in enumerate(vizs):
+                    logger_t.log({
+                        f'viz/teacher_{i}/GT_Segmentation': wandb.Image(d['GT_Segmentation']),
+                        f'viz/teacher_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
+                        f'viz/teacher_{i}/GT_Keypoints': wandb.Image(d['GT_Keypoints']),
+                        f'viz/teacher_{i}/Teacher_Keypoints': wandb.Image(d['Teacher_Keypoints']),
+                    }, step=epoch)
+
+                # ⑦ 保存最佳教师
+                val_pck = pck_stats['coco/AP50']
+                if val_pck > best_pck:
                     best_pck = val_pck
-                    best_t = teacher.state_dict()
+                    best_t = teacher.module.state_dict() if args.dist else teacher.state_dict()
 
-            torch.cuda.empty_cache()
+            torch.cuda.empty_cache()  # 释放显存
 
-        torch.save(best_t, os.path.join(args.output_dir, 'models', 'teacher.pth'))
-        logger_t.finish()
+        # 训练结束后（仍只在 rank 0）保存教师模型
+        if is_main:
+            torch.save(best_t, os.path.join(args.output_dir, 'models', 'teacher.pth'))
+            logger_t.finish()
 
         # ===== Student Distillation =====
-        teacher.load_state_dict(best_t)
+        teacher.load_state_dict(best_t)  # 载入最佳教师
         teacher.eval()
-        logger_s = WandbLogger(f"Student{args.project_name}", args.entity, config=vars(args))
+
         best_pck = 0.0
         best_s = student.state_dict()
+        logger_s = WandbLogger(f"Student{args.project_name}", args.entity, config=vars(args))
 
-        for epoch in trange(1, args.student_epochs + 1, desc='Student'):
+        for epoch in trange(1, args.student_epochs + 1,
+                            desc='Student', disable=not is_main):
+
+            if args.dist:
+                train_ld.sampler.set_epoch(epoch)
+
             if epoch <= args.warmup_epochs:
                 lr = args.lr * epoch / args.warmup_epochs
                 for g in opt_s.param_groups:
                     g['lr'] = lr
 
+            # ① 训练学生（含蒸馏损失）
             metrics = run_one_epoch(
                 student, train_ld,
                 {'distill': dist_fn},
-                optimizer=opt_s, teacher=teacher, device=device, scaler=scaler
+                optimizer=opt_s, teacher=teacher,
+                device=device, scaler=scaler, args=args
             )
-            pck_stats = validate_all(
-                teacher, val_ld, device,
-                coco_gt_json   = os.path.join(args.data_dir, 'annotations', 'person_keypoints_val2017.json'),
-                tmp_results_json = os.path.join(args.output_dir, 'val_results.json'),
-                thresh_ratio  = 0.05
-            )
-            logger_s.log({**metrics, **pck_stats, 'epoch': epoch}, step=epoch)
 
-            # Visualization GT vs Teacher vs Student
-            imgs, masks, hm_lbl, paf_lbl, kps, vis, _ = next(iter(val_ld))
-            with torch.no_grad():
-                t_seg_out, t_hm, t_paf, t_multi = teacher(imgs.to(device))
-                s_seg_out, s_hm, s_paf, s_multi = student(imgs.to(device))
-            vizs = visualize_batch(
-                imgs, masks,
-                t_seg_out, s_seg_out,
-                t_hm, t_paf, t_multi,
-                s_hm=s_hm, s_paf=s_paf, s_multi=s_multi,
-                kps_list=kps, vis_list=vis,
-                n=args.val_viz_num
-            )
-            for i, d in enumerate(vizs):
-                logger_s.log({
-                    f'viz/student_{i}/GT_Segmentation': wandb.Image(d['GT_Segmentation']),
-                    f'viz/student_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
-                    f'viz/student_{i}/Teacher_Keypoints': wandb.Image(d['Teacher_Keypoints']),
-                    f'viz/student_{i}/Student_Segmentation': wandb.Image(d['Student_Segmentation']),
-                    f'viz/student_{i}/Student_Keypoints': wandb.Image(d['Student_Keypoints']),
-                    f'viz/student_{i}/GT_Keypoints': wandb.Image(d['GT_Keypoints'])
-                }, step=epoch)
+            # ---------- 仅 rank 0 做验证 / 日志 / 可视化 ----------
+            if is_main:
+                # ② 评估学生 PCK
+                pck_stats = validate_all(
+                    student, val_ld, device,
+                    coco_gt_json=os.path.join(
+                        args.data_dir, 'annotations',
+                        'person_keypoints_val2017.json'),
+                    tmp_results_json=os.path.join(
+                        args.output_dir, f'val_results_student_{epoch}.json'),
+                    thresh_ratio=0.05
+                )
 
+                logger_s.log({**metrics, **pck_stats, 'epoch': epoch}, step=epoch)
 
-            val_pck = pck_stats['coco/AP50']
-            if val_pck > best_pck:
+                # ③ 可视化
+                imgs, masks, hm_lbl, paf_lbl, kps, vis, _ = next(iter(val_ld))
+                with torch.no_grad():
+                    t_seg_out, t_hm, t_paf, t_multi = teacher(imgs.to(device))
+                    s_seg_out, s_hm, s_paf, s_multi = student(imgs.to(device))
+                vizs = visualize_batch(
+                    imgs, masks,
+                    t_seg_out, s_seg_out,
+                    t_hm, t_paf, t_multi,
+                    s_hm=s_hm, s_paf=s_paf, s_multi=s_multi,
+                    n=args.val_viz_num,
+                    kps_list=kps, vis_list=vis
+                )
+                for i, d in enumerate(vizs):
+                    logger_s.log({
+                        f'viz/student_{i}/GT_Segmentation': wandb.Image(d['GT_Segmentation']),
+                        f'viz/student_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
+                        f'viz/student_{i}/Teacher_Keypoints': wandb.Image(d['Teacher_Keypoints']),
+                        f'viz/student_{i}/Student_Segmentation': wandb.Image(d['Student_Segmentation']),
+                        f'viz/student_{i}/Student_Keypoints': wandb.Image(d['Student_Keypoints']),
+                        f'viz/student_{i}/GT_Keypoints': wandb.Image(d['GT_Keypoints']),
+                    }, step=epoch)
+
+                # ④ 保存最佳学生
+                val_pck = pck_stats['coco/AP50']
+                if val_pck > best_pck:
                     best_pck = val_pck
-                    best_t = student.state_dict()
+                    best_s = student.module.state_dict() if args.dist else student.state_dict()
 
             torch.cuda.empty_cache()
 
-        torch.save(best_s, os.path.join(args.output_dir, 'models', 'student.pth'))
-        logger_s.finish()
+        # 收尾：保存学生模型
+        if is_main:
+            torch.save(best_s, os.path.join(args.output_dir, 'models', 'student.pth'))
+            logger_s.finish()
 
     except Exception:
         logging.exception("Training failed")
@@ -509,3 +564,5 @@ if __name__ == '__main__':
     finally:
         if args.dist:
             dist.destroy_process_group()
+        if is_main:
+            print("Training finished. Models & logs saved to", args.output_dir)
