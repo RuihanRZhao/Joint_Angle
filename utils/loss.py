@@ -105,25 +105,16 @@ class MultiTaskLoss(nn.Module):
 
 
 class DistillationLoss(nn.Module):
-    """
-    蒸馏分割、Heatmap 和 PAF：
-      - seg_task:   学生分割对 GT 的 BCE Loss
-      - seg_dist:   学生分割对教师分割概率的 MSE Loss
-      - hm_dist:    学生 heatmap 对教师 heatmap 概率的 MSE Loss
-      - paf_dist:   学生 PAF 对教师 PAF 向量的 MSE Loss
-      总 loss = seg_task + λ_dist*(seg_dist + hm_dist + paf_dist)
-    """
-
-    def __init__(self, lambda_dist: float = 1.0):
+    def __init__(self, alpha=1.0, beta=1.0, gamma=1.0):
         super().__init__()
-        self.bce = nn.BCEWithLogitsLoss()
-        self.mse = nn.MSELoss()
-        self.lambda_dist = lambda_dist
+        self.alpha = alpha
+        self.beta  = beta
+        self.gamma = gamma
 
     def forward(self, student_outputs, teacher_outputs, targets):
         """
         student_outputs: (s_seg, s_hm, s_paf)
-        teacher_outputs: (t_seg, t_hm, t_paf) (already detached)
+        teacher_outputs: (t_seg, t_hm, t_paf) (已 detach)
         targets: (gt_mask, gt_kps_list, gt_vis_list)
         """
         s_seg, s_hm, s_paf = student_outputs
@@ -131,48 +122,53 @@ class DistillationLoss(nn.Module):
         gt_mask, gt_kps, gt_vis = targets
 
         # —— 分割蒸馏 ——
-        # 1) 老师的分割概率
         t_prob = torch.sigmoid(t_seg.detach())
-        # 2) 对齐到 GT mask 的空间尺寸
-        target_size = gt_mask.shape[2:]  # (H_gt, W_gt)
+        # 对齐空间
+        target_size = gt_mask.shape[2:]
         if s_seg.shape[2:] != target_size:
-            s_seg = F.interpolate(s_seg,
-                                  size=target_size,
-                                  mode='bilinear',
-                                  align_corners=False)
+            s_seg = F.interpolate(s_seg, size=target_size, mode='bilinear', align_corners=False)
         if t_prob.shape[2:] != target_size:
-            t_prob = F.interpolate(t_prob,
-                                   size=target_size,
-                                   mode='bilinear',
-                                   align_corners=False)
-        # 3) 用 BCEWithLogits 计算蒸馏损失
+            t_prob = F.interpolate(t_prob, size=target_size, mode='bilinear', align_corners=False)
         seg_loss = F.binary_cross_entropy_with_logits(s_seg, t_prob)
 
         # —— 热力图蒸馏 ——
-        # 对齐后做 L2
         hm_pred = torch.sigmoid(s_hm)
         hm_tgt  = torch.sigmoid(t_hm.detach())
+        # 对齐通道数
+        C_pred, C_tgt = hm_pred.shape[1], hm_tgt.shape[1]
+        if C_pred > C_tgt:
+            hm_pred = hm_pred[:, :C_tgt]
+        elif C_pred < C_tgt:
+            pad = torch.zeros(hm_pred.size(0), C_tgt - C_pred,
+                              hm_pred.size(2), hm_pred.size(3),
+                              device=hm_pred.device, dtype=hm_pred.dtype)
+            hm_pred = torch.cat([hm_pred, pad], dim=1)
+        # 对齐空间
         if hm_pred.shape[2:] != hm_tgt.shape[2:]:
-            hm_pred = F.interpolate(hm_pred,
-                                    size=hm_tgt.shape[2:],
-                                    mode='bilinear',
-                                    align_corners=False)
+            hm_pred = F.interpolate(hm_pred, size=hm_tgt.shape[2:], mode='bilinear', align_corners=False)
+        if hm_tgt.shape[2:] != hm_pred.shape[2:]:
+            hm_tgt = F.interpolate(hm_tgt, size=hm_pred.shape[2:], mode='bilinear', align_corners=False)
         hm_loss = F.mse_loss(hm_pred, hm_tgt)
 
         # —— PAF 蒸馏 ——
-        # 对齐后做 L1
         paf_pred = s_paf
         paf_tgt  = t_paf.detach()
+        # 对齐通道数
+        C_pred, C_tgt = paf_pred.shape[1], paf_tgt.shape[1]
+        if C_pred > C_tgt:
+            paf_pred = paf_pred[:, :C_tgt]
+        elif C_pred < C_tgt:
+            pad = torch.zeros(paf_pred.size(0), C_tgt - C_pred,
+                              paf_pred.size(2), paf_pred.size(3),
+                              device=paf_pred.device, dtype=paf_pred.dtype)
+            paf_pred = torch.cat([paf_pred, pad], dim=1)
+        # 对齐空间
         if paf_pred.shape[2:] != paf_tgt.shape[2:]:
-            paf_pred = F.interpolate(paf_pred,
-                                     size=paf_tgt.shape[2:],
-                                     mode='bilinear',
-                                     align_corners=False)
+            paf_pred = F.interpolate(paf_pred, size=paf_tgt.shape[2:], mode='bilinear', align_corners=False)
         paf_loss = F.l1_loss(paf_pred, paf_tgt)
 
-        # —— 总损失加权 ——
         total_loss = self.alpha * seg_loss \
-                   + self.beta  * hm_loss \
+                   + self.beta  * hm_loss  \
                    + self.gamma * paf_loss
 
         return total_loss, {
