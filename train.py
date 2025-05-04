@@ -183,13 +183,12 @@ def train(args):
             current_lr = optimizer.param_groups[0]['lr']
             total_norm = sum(p.grad.data.norm(2).item()**2 for p in model.parameters() if p.grad is not None)**0.5
 
-            if args.use_wandb:
-                wandb.log({
-                    'train/batch_loss': loss.item(),
-                    'train/lr': current_lr,
-                    'train/grad_norm': total_norm,
-                    'train/batch_time': batch_time
-                }, step=(epoch-1)*len(train_loader) + batch_idx)
+            wandb.log({
+                'train/batch_loss': loss.item(),
+                'train/lr': current_lr,
+                'train/grad_norm': total_norm,
+                'train/batch_time': batch_time
+            }, step=(epoch-1)*len(train_loader) + batch_idx)
 
             pbar.update(1)
             pbar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{current_lr:.2e}", 'batch_time': f"{batch_time:.2f}s"})
