@@ -251,9 +251,25 @@ def train(args):
             best_ap = kp_acc
             best_model_path = os.path.join(args.output_dir, "best_model.pth")
             torch.save(model.state_dict(), best_model_path)
-            if args.use_wandb:
-                wandb.run.summary["best_kp_acc"] = kp_acc
-                wandb.save(best_model_path)
+
+            artifact = wandb.Artifact(
+                name="best-segmentation-model",
+                type="model",
+                description=f"Best model at epoch {epoch} with seg_ap={best_ap:.4f}"
+            )
+            # 添加模型文件到 Artifact
+            artifact.add_file(best_model_path)
+
+            # 你也可以在 metadata 里记录更多信息
+            artifact.metadata = {
+                "epoch": epoch,
+                "seg_ap": best_ap,
+                "kp_acc": kp_acc,
+            }
+
+            wandb.log_artifact(artifact, aliases=["best keypoint accuracy"])
+            wandb.run.summary["best_kp_acc"] = best_ap
+
 
         # WandB 日志
         wandb.log({
