@@ -48,17 +48,13 @@ class PoseEvaluator:
         """将预测结果转换为COCO格式"""
         coco_kps = []
         for kps, score in zip(keypoints, scores):
-            # 只把当前那个人的关键点列表转成 array
             kps_arr = np.asarray(kps, dtype=np.float32)
-
-            # 缩放回原图尺寸（假设网络输入 256x256，heatmap 输出 64x64 → *4）
             x = kps_arr[:, 0] * 4
             y = kps_arr[:, 1] * 4
-            v = np.ones(len(kps_arr), dtype=np.float32)  # 全部可见
+            v = np.ones(len(kps_arr), dtype=np.float32)
 
             coco_kp = []
             for idx, kp_name in enumerate(self.keypoints):
-                # 如果预测列表里没有这个关节点则填 0
                 if idx < kps_arr.shape[0]:
                     x_val = float(x[idx])
                     y_val = float(y[idx])
@@ -69,7 +65,7 @@ class PoseEvaluator:
 
             coco_kps.append({
                 "image_id": int(image_id),
-                "category_id": 1,  # COCO 人体类别
+                "category_id": 1,
                 "keypoints": coco_kp,
                 "score": float(score)
             })
@@ -78,17 +74,16 @@ class PoseEvaluator:
     def update(self, batch_preds, batch_gt):
         """更新预测结果"""
         for img_id, heatmaps, scores in batch_preds:
-            # 从 heatmap 中提取每个人的关键点坐标
+            # 如果没有检测到任何人，则跳过
+            if not scores:
+                continue
             keypoints = []
             for hm in heatmaps:
-                # 假设 hm 是热图，找到最大响应的位置
                 y, x = np.unravel_index(np.argmax(hm), hm.shape)
                 keypoints.append([x, y])
 
-            # 统一得分
             mean_score = float(sum(scores) / len(scores))
 
-            # 转换并累加到结果列表
             self.results.extend(
                 self._convert_to_coco_format(img_id, [keypoints], [mean_score])
             )
@@ -98,7 +93,6 @@ class PoseEvaluator:
         coco_dt = self.coco_gt.loadRes(self.results)
         coco_eval = COCOeval(self.coco_gt, coco_dt, 'keypoints')
 
-        # 设置 OKS sigma
         coco_eval.params.kpt_oks_sigmas = np.array([
             0.026, 0.025, 0.025, 0.035, 0.035,
             0.079, 0.072, 0.062, 0.107, 0.087,
@@ -109,4 +103,4 @@ class PoseEvaluator:
         coco_eval.evaluate()
         coco_eval.accumulate()
         coco_eval.summarize()
-        return coco_eval.stats[0]  # AP@[0.5:0.95]
+        return coco_eval.stats[0]
