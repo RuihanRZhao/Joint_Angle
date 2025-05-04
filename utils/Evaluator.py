@@ -75,8 +75,10 @@ class PoseEvaluator:
                 y, x = np.unravel_index(np.argmax(hm), hm.shape)
                 keypoints.append([x, y])
 
+            mean_score = sum(scores) / len(scores)
+
             self.results.extend(
-                self._convert_to_coco_format(img_id, [keypoints], [scores.mean()])
+                self._convert_to_coco_format(img_id, [keypoints], [mean_score])
             )
 
     def compute_ap(self):
