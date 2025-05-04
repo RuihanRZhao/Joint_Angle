@@ -4,11 +4,7 @@ import cv2
 import random
 import numpy as np
 import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from torch.amp import autocast, GradScaler
 import tqdm
 import wandb
@@ -20,7 +16,6 @@ from early_stopping_pytorch import EarlyStopping
 
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn  # 导入数据集类
 from utils.loss import criterion
-from utils.visualization import overlay_mask, draw_keypoints_linked_multi
 from models.SegKP_Model import PosePostProcessor
 
 from config import arg_test, arg_real
@@ -164,7 +159,6 @@ def train(args):
 
     # WandB
     if args.use_wandb:
-        wandb.login()
         wandb.init(
             project=args.project_name,
             config=vars(args),
