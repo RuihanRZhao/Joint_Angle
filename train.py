@@ -203,56 +203,61 @@ def train(args):
         # 验证
         val_start = time.time()
         model.eval()
+        val_start = time.time()
         val_loss = 0.0
 
-        all_pred_masks, all_gt_masks = [], []
-        all_pred_kps, all_gt_kps   = [], []
-        sample_seg_gts, sample_seg_preds = [], []
-        sample_pose_gts, sample_pose_preds = [], []
-        sample_sizes = []
+        # 用于收集预测 & GT，用于评估
+        all_gt_masks, all_pred_masks = [], []
+        all_gt_kps, all_pred_kps = [], []
 
         with torch.no_grad():
             for imgs, masks, hm, paf, _, _, sizes in val_loader:
-                imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
-                with autocast(device_type='cuda', enabled=args.use_fp16):
+                imgs, masks, hm, paf = (
+                    imgs.to(device),
+                    masks.to(device),
+                    hm.to(device),
+                    paf.to(device),
+                )
+
+                # 前向 & 损失
+                with autocast(device_type="cuda", enabled=args.use_fp16):
                     seg_pred, pose_pred = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 val_loss += loss.item()
 
-                # 收集用于 evaluator 和可视化
-                pred_mask = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy()
-                for i, pm in enumerate(pred_mask):
+                # —— 分割结果收集 ——
+                pm = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy()
+                for i in range(pm.shape[0]):
+                    # 只取 sizes[i] 的前两项，并强制转为 Python int
+                    h = int(sizes[i][0])
+                    w = int(sizes[i][1])
 
-                    # 只取前两项为原图高宽
-                    h, w = sizes[i][0], sizes[i][1]
-                    # 布尔→uint8，再 resize
+                    # 布尔 → uint8，再 resize 回原图大小
                     mask_bool = pm[i, 0]
                     mask_uint8 = mask_bool.astype(np.uint8)
-                    pm_resized = cv2.resize(mask_uint8, (w, h),
-                                            interpolation = cv2.INTER_NEAREST)
+                    pm_resized = cv2.resize(
+                        mask_uint8,
+                        dsize=(w, h),
+                        interpolation=cv2.INTER_NEAREST
+                    )
 
                     gt_m = masks[i, 0].cpu().numpy()
                     all_pred_masks.append(pm_resized)
-                    all_gt_masks.append(masks[i].cpu().numpy().squeeze())
+                    all_gt_masks.append(gt_m)
 
-                pred_kps = post_processor(pose_pred.cpu().numpy(), sizes)
-                gt_kps   = post_processor(hm.cpu().numpy(), sizes)
+                # —— 关键点结果收集 ——
+                pred_kps = postproc(pose_pred.cpu().numpy(), sizes)
+                gt_kps = postproc(hm.cpu().numpy(), sizes)
                 all_pred_kps.extend(pred_kps)
                 all_gt_kps.extend(gt_kps)
 
-                if len(sample_seg_gts) < args.val_viz_num:
-                    sample_seg_gts.extend(masks.cpu().unbind())
-                    sample_seg_preds.extend(seg_pred.cpu().unbind())
-                    sample_pose_gts.extend(hm.cpu().unbind())
-                    sample_pose_preds.extend(pose_pred.cpu().unbind())
-                    sample_sizes.extend(sizes)
-
+        # 计算平均验证 loss 和耗时
         avg_val_loss = val_loss / len(val_loader)
         val_time = time.time() - val_start
 
-        # 计算 evaluator 指标
-        seg_iou  = SegmentationEvaluator(all_pred_masks, all_gt_masks)
-        kp_acc   = PoseEvaluator(all_pred_kps, all_gt_kps)
+        # —— 调用 evaluator 计算指标 ——
+        seg_ap = evaluate_segmentation(all_pred_masks, all_gt_masks)
+        kp_ap = evaluate_keypoints(all_pred_kps, all_gt_kps)
 
         if kp_acc > best_ap:
             best_ap = kp_acc
