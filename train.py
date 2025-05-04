@@ -204,7 +204,7 @@ def main_worker(rank, world_size, args):
         model.train()
         train_loss = 0.0
 
-        train_pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}/{args.epochs} [Train]", position=0, leave=True) if rank == 0 else train_pbar = None
+        train_pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}/{args.epochs} [Train]", position=0, leave=True) if rank == 0 else None
 
         for batch_idx, (imgs, masks, hm, paf, _, _, _) in enumerate(train_loader):
             imgs = imgs.to(rank)
@@ -246,7 +246,7 @@ def main_worker(rank, world_size, args):
         sample_pose_preds = []
         sample_sizes = []
 
-        val_pbar = tqdm(total=len(val_loader), desc=f"Epoch {epoch + 1}/{args.epochs} [Val]", position=0, leave=False) if rank == 0 else val_pbar = None
+        val_pbar = tqdm(total=len(val_loader), desc=f"Epoch {epoch + 1}/{args.epochs} [Val]", position=0, leave=False) if rank == 0 else None
 
         with torch.no_grad():
             for batch in val_loader:
