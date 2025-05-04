@@ -179,7 +179,7 @@ def main_worker(rank, world_size, args):
         cycle_mult=1.0,
         max_lr=args.lr,
         min_lr=1e-6,
-        warmup_steps=args.warmup_epochs * len(train_loader),
+        warmup_steps=args.warmup_epochs,
         gamma=1.0
     )
 
@@ -306,8 +306,8 @@ def main_worker(rank, world_size, args):
                 print("Early stopping triggered")
                 break
 
-    # 清理分布式环境
-    cleanup()
+            # 清理分布式环境
+            cleanup()
 
 
 if __name__ == "__main__":
