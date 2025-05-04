@@ -1,44 +1,66 @@
-"""
-pose.py: Defines the enhanced pose estimation network.
-The network uses a ResNet backbone (e.g., ResNet-50) and deconvolutional layers
-to generate heatmaps for keypoint estimation.
-"""
-
-
 import torch
 import torch.nn as nn
-import torchvision.models as models
-from torchvision.models import ResNet50_Weights
+from timm import create_model
 
-class PoseEstimationModel(nn.Module):
-    def __init__(self, in_channels: int = 3, num_keypoints: int = 17, num_pafs: int = 32, num_deconv_layers: int = 3):
+class ViTPoseModel(nn.Module):
+    def __init__(self,
+                 backbone_name: str = "vit_base_patch16_256",
+                 pretrained: bool = True,
+                 img_size: int = 256,
+                 num_keypoints: int = 17,
+                 num_pafs: int = 19):
         super().__init__()
-        # Backbone: ResNet50
-        resnet = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
-        if in_channels != 3:
-            resnet.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.backbone = nn.Sequential(*list(resnet.children())[:-2])  # up to conv5_x
+        # timm.create_model(pretrained=True) 会自动下载 ImageNet 权重
+        self.backbone = create_model(
+            backbone_name,
+            pretrained=pretrained,
+            in_chans=4,
+            img_size=img_size,
+            num_classes=0
+        )
+        embed_dim = self.backbone.embed_dim  # e.g. 768 for base
 
-        # Deconvolutional layers to upsample features
-        self.deconv_layers = self._make_deconv_layers(num_deconv_layers)
-        # Head: heatmaps for keypoints
-        self.heatmap_head = nn.Conv2d(256, num_keypoints, kernel_size=1)
-        # Head: Part Affinity Fields for limbs
-        self.paf_head = nn.Conv2d(256, num_pafs, kernel_size=1)
+        # 2) 一个简单的 upsampling decoder，将 transformer 特征还原到 H/4
+        #    先把序列特征重塑成 [B, C, H/16, W/16]，再多级上采样
+        self.decoder = nn.Sequential(
+            nn.Conv2d(embed_dim, embed_dim, kernel_size=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # H/16 -> H/8
+            nn.Conv2d(embed_dim, embed_dim//2, kernel_size=3, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # H/8 -> H/4
+            nn.Conv2d(embed_dim//2, embed_dim//4, kernel_size=3, padding=1),
+            nn.BatchNorm2d(embed_dim//4),
+            nn.ReLU(inplace=True),
+        )
 
-    def _make_deconv_layers(self, num_layers: int):
-        layers = []
-        in_channels = 2048
-        for _ in range(num_layers):
-            layers.append(nn.ConvTranspose2d(in_channels, 256, kernel_size=4, stride=2, padding=1, bias=False))
-            layers.append(nn.BatchNorm2d(256))
-            layers.append(nn.ReLU(inplace=True))
-            in_channels = 256
-        return nn.Sequential(*layers)
+        # 3) 分别为热图和 PAF 定义头
+        self.heatmap_head = nn.Conv2d(embed_dim//4, num_keypoints, kernel_size=1)
+        self.paf_head     = nn.Conv2d(embed_dim//4, 2 * num_pafs,  kernel_size=1)
 
-    def forward(self, x: torch.Tensor):
-        feats = self.backbone(x)            # [B, 2048, H/32, W/32]
-        up_feats = self.deconv_layers(feats)  # [B, 256, H/4, W/4]（取决于 deconv 层数）
-        heatmaps = self.heatmap_head(up_feats)  # [B, K, H/4, W/4]
-        pafs = self.paf_head(up_feats)          # [B, 2*L, H/4, W/4]
+    def forward(self, img4: torch.Tensor):
+        """
+        img4: [B,4,H,W]，4 通道输入（RGB+seg_mask）
+        返回：
+            heatmaps: [B,K,H/4,W/4]
+            pafs:     [B,2*L,H/4,W/4]
+        """
+        B, C, H, W = img4.shape
+        # 1) ViT 前向：得到 [B, N, embed_dim]
+        x = self.backbone.patch_embed(img4)              # [B, embed_dim, H/16, W/16]
+        x = x.flatten(2).transpose(1,2)                  # [B, N, embed_dim]
+        cls_and_patch = torch.cat((self.backbone.cls_token.expand(B, -1, -1), x), dim=1)
+        for blk in self.backbone.blocks:
+            cls_and_patch = blk(cls_and_patch)
+        x = self.backbone.norm(cls_and_patch)[:, 1:, :]  # [B, N, embed_dim]
+        # 2) 重塑为特征图
+        h16 = int(H // 16)
+        w16 = int(W // 16)
+        feat = x.transpose(1,2).view(B, -1, h16, w16)    # [B,embed_dim,H/16,W/16]
+
+        # 3) Decoder 上采样到 H/4
+        up_feats = self.decoder(feat)                    # [B, embed_dim//4, H/4, W/4]
+
+        # 4) 生成 heatmaps 和 pafs
+        heatmaps = self.heatmap_head(up_feats)           # [B,K,H/4,W/4]
+        pafs     = self.paf_head(up_feats)               # [B,2*L,H/4,W/4]
+
         return heatmaps, pafs
