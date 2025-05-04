@@ -311,8 +311,8 @@ def main_worker(rank, world_size, args):
 
 
 if __name__ == "__main__":
-    parser = arg_test()
-    # parser = arg_real()
+    args = arg_test()
+    # args = arg_real()
 
     # 启动多进程训练
     world_size = torch.cuda.device_count()
