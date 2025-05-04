@@ -222,9 +222,16 @@ def train(args):
                 # 收集用于 evaluator 和可视化
                 pred_mask = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy()
                 for i, pm in enumerate(pred_mask):
-                    size = sizes[i]
-                    h, w = size[0], size[1]
-                    pm_resized = cv2.resize(pm.squeeze(), (w, h), interpolation=cv2.INTER_NEAREST)
+
+                    # 只取前两项为原图高宽
+                    h, w = sizes[i][0], sizes[i][1]
+                    # 布尔→uint8，再 resize
+                    mask_bool = pm[i, 0]
+                    mask_uint8 = mask_bool.astype(np.uint8)
+                    pm_resized = cv2.resize(mask_uint8, (w, h),
+                                            interpolation = cv2.INTER_NEAREST)
+
+                    gt_m = masks[i, 0].cpu().numpy()
                     all_pred_masks.append(pm_resized)
                     all_gt_masks.append(masks[i].cpu().numpy().squeeze())
 
