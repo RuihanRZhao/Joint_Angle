@@ -173,36 +173,26 @@ class SegmentKeypointModel(nn.Module):
 
         backbone = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.DEFAULT)
         self.features = backbone.features
-
-        # 选取合适的层索引
         self.out_indices = [3, 6, 13]
         self.out_channels = [self.features[i].out_channels for i in self.out_indices]
         in_channels = sum(self.out_channels)
-
-        # 通道融合
         self.fuse_conv = nn.Sequential(
             nn.Conv2d(in_channels, 256, 1),
-            nn.BatchNorm2d(256),
-            nn.ReLU()
+            nn.BatchNorm2d(256), nn.ReLU()
         )
-
         # 分割头
         self.seg_head = nn.Sequential(
             nn.Conv2d(256, 64, 3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
+            nn.BatchNorm2d(64), nn.ReLU(),
             nn.Conv2d(64, 1, 1)
         )
-
-        # 姿态头
+        # 姿态头（输出 55 通道：17 热图 + 38 PAF）
         self.pose_head = nn.Sequential(
             nn.Conv2d(256, 256, 3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
+            nn.BatchNorm2d(256), nn.ReLU(),
             nn.Conv2d(256, 55, 1)
         )
-
-        self.postprocessor = PosePostProcessor()
+        self.postprocessor = PosePostProcessor()  # 用于推理时关键点后处理
 
     def forward(self, x):
         # 1) Backbone 特征提取
@@ -214,33 +204,33 @@ class SegmentKeypointModel(nn.Module):
                 feats.append(h)
 
         # 2) 上采样到同一空间尺寸并拼接
-        target_size = feats[0].shape[2:]  # e.g. (H_feat, W_feat)
-        feats = [
-            F.interpolate(f, size=target_size, mode='bilinear', align_corners=False)
-            for f in feats
-        ]
+        target_size = feats[0].shape[2:]  # 低分辨率特征图尺寸
+        feats = [F.interpolate(f, size=target_size, mode='bilinear', align_corners=False) for f in feats]
         fused = torch.cat(feats, dim=1)
         fused = self.fuse_conv(fused)
 
-        # 3) 分割头：先在 fused 上预测低分辨率 logits，再上采样到输入图尺寸
+        # 3) 分割头：预测低分辨率分割 logits，再上采样到输入图像尺寸
         seg_logits = self.seg_head(fused)
         seg_logits = F.interpolate(
-            seg_logits,
-            size=(x.shape[2], x.shape[3]),  # 恢复到原图 H×W
-            mode='bilinear',
-            align_corners=False
+            seg_logits, size=(x.shape[2], x.shape[3]),
+            mode='bilinear', align_corners=False
         )
 
-        # 4) 姿态头：预测 low-res heatmap，并保持在 target_size
+        # 4) 姿态头：预测低分辨率热图
         pose_logits = self.pose_head(fused)
         pose_pred = F.interpolate(
-            pose_logits,
-            size=target_size,  # 与低分辨率特征图/heatmap GT 对齐
-            mode='bilinear',
-            align_corners=False
+            pose_logits, size=target_size,
+            mode='bilinear', align_corners=False
         )
 
-        return seg_logits, pose_pred
+        # 根据模式不同返回不同输出
+        if self.training:
+            # 训练时返回原始 heatmap（用于计算损失）
+            return seg_logits, pose_pred
+        else:
+            # 推理时后处理热图得到关键点坐标
+            multi_kps = self.postprocessor(pose_pred)
+            return seg_logits, multi_kps
 
 
 
