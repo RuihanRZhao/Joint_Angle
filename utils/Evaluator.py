@@ -48,21 +48,22 @@ class PoseEvaluator:
         """将预测结果转换为COCO格式"""
         coco_kps = []
         for kps, score in zip(keypoints, scores):
-            # 坐标缩放回原图尺寸
-            kps = np.asarray(keypoints, dtype=np.float32)
+            # 只把当前那个人的关键点列表转成 array
+            kps_arr = np.asarray(kps, dtype=np.float32)
 
-            x = kps[:, 0] * 4  # 假设输入256x256，输出64x64热图
-            y = kps[:, 1] * 4
-            v = np.ones(len(kps))  # 可见性设为1
+            # 缩放回原图尺寸（假设网络输入 256x256，heatmap 输出 64x64 → *4）
+            x = kps_arr[:, 0] * 4
+            y = kps_arr[:, 1] * 4
+            v = np.ones(len(kps_arr), dtype=np.float32)  # 全部可见
 
             coco_kp = []
-            for k in self.keypoints:
-                idx = self.keypoints.index(k)
-                coco_kp.extend([x[idx], y[idx], v[idx]])
+            for kp_name in self.keypoints:
+                idx = self.keypoints.index(kp_name)
+                coco_kp.extend([float(x[idx]), float(y[idx]), float(v[idx])])
 
             coco_kps.append({
                 "image_id": int(image_id),
-                "category_id": 1,  # COCO人体类别
+                "category_id": 1,  # COCO 人体类别
                 "keypoints": coco_kp,
                 "score": float(score)
             })
@@ -71,26 +72,28 @@ class PoseEvaluator:
     def update(self, batch_preds, batch_gt):
         """更新预测结果"""
         for img_id, heatmaps, scores in batch_preds:
-            # 从热图中提取关键点坐标
+            # 从 heatmap 中提取每个人的关键点坐标
             keypoints = []
             for hm in heatmaps:
                 y, x = np.unravel_index(np.argmax(hm), hm.shape)
                 keypoints.append([x, y])
 
+            # 统一得分
             mean_score = sum(scores) / len(scores)
 
+            # 转换并累加到结果列表
             self.results.extend(
                 self._convert_to_coco_format(img_id, [keypoints], [mean_score])
             )
 
     def compute_ap(self):
-        """计算COCO标准AP"""
+        """计算 COCO 标准 AP"""
         coco_dt = self.coco_gt.loadRes(self.results)
         coco_eval = COCOeval(self.coco_gt, coco_dt, 'keypoints')
 
-        # 设置评估参数
+        # 设置 OKS sigma
         coco_eval.params.kpt_oks_sigmas = np.array([
-            0.026, 0.025, 0.025, 0.035, 0.035,  # 关键点OKS标准差
+            0.026, 0.025, 0.025, 0.035, 0.035,
             0.079, 0.072, 0.062, 0.107, 0.087,
             0.089, 0.068, 0.062, 0.107, 0.087,
             0.087, 0.089
@@ -104,21 +107,21 @@ class PoseEvaluator:
 
 # 使用示例
 if __name__ == "__main__":
-    # 分割评估
+    # 分割评估示例
     seg_eval = SegmentationEvaluator(num_classes=2)
     seg_logits = torch.randn(2, 1, 256, 256)  # 模拟模型输出
     seg_gt = torch.randint(0, 2, (2, 1, 256, 256))  # 模拟真实标签
     seg_eval.update(seg_logits, seg_gt)
     print(f"Segmentation mIoU: {seg_eval.compute_miou():.4f}")
 
-    # 姿态评估
+    # 姿态评估示例
     coco_keypoints = ['nose', 'left_shoulder', 'right_shoulder']  # 示例关键点
     pose_eval = PoseEvaluator('path/to/annotations.json', coco_keypoints)
 
     # 模拟预测结果 (image_id, heatmaps, scores)
     fake_preds = [
-        (0, np.random.rand(3, 64, 64), 0.9),
-        (1, np.random.rand(3, 64, 64), 0.8)
+        (0, np.random.rand(3, 64, 64), [0.9, 0.9, 0.9]),
+        (1, np.random.rand(3, 64, 64), [0.8, 0.8, 0.8])
     ]
     pose_eval.update(fake_preds, None)
     print(f"Pose AP: {pose_eval.compute_ap():.4f}")
