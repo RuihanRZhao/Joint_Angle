@@ -1,5 +1,5 @@
 import os
-
+import time
 import cv2
 import random
 import numpy as np
@@ -17,6 +17,7 @@ from early_stopping_pytorch import EarlyStopping
 
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn  # 导入数据集类
 from utils.loss import criterion
+from utils.Evaluator import SegmentationEvaluator,PoseEvaluator
 from models.SegKP_Model import PosePostProcessor
 
 from config import arg_test, arg_real
@@ -111,36 +112,24 @@ def log_samples(
             wandb.Image(pred_pose)
         )
 
-    wandb.log({f"Validation Samples Epoch {epoch}": table})
-
+    wandb.log({f"Validation Samples Epoch {epoch}": table}, step=epoch)
 
 def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # 数据集加载
-    train_samples = prepare_coco_dataset(
-        args.data_dir, split='train', max_samples=args.max_samples)
-    val_samples = prepare_coco_dataset(
-        args.data_dir, split='val', max_samples=args.max_samples)
+    # 数据加载
+    train_samples = prepare_coco_dataset(args.data_dir, split='train', max_samples=args.max_samples)
+    val_samples   = prepare_coco_dataset(args.data_dir, split='val',   max_samples=args.max_samples)
+    train_loader  = DataLoader(COCODataset(train_samples), batch_size=args.batch_size,
+                               shuffle=True, num_workers=args.num_workers,
+                               pin_memory=True, collate_fn=collate_fn)
+    val_loader    = DataLoader(COCODataset(val_samples),   batch_size=args.batch_size,
+                               shuffle=False, num_workers=args.num_workers,
+                               pin_memory=True, collate_fn=collate_fn)
 
-    train_dataset = COCODataset(train_samples)
-    val_dataset = COCODataset(val_samples)
-
-    train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size,
-        shuffle=True, num_workers=args.num_workers,
-        pin_memory=True, collate_fn=collate_fn)
-    val_loader = DataLoader(
-        val_dataset, batch_size=args.batch_size,
-        shuffle=False, num_workers=args.num_workers,
-        pin_memory=True, collate_fn=collate_fn)
-
-    # 模型和优化器
-    model = SegmentKeypointModel().to(device)
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=1e-4)
-
-    # 学习率调度器
+    # 模型、优化器、调度
+    model     = SegmentKeypointModel().to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = CosineAnnealingWarmupRestarts(
         optimizer,
         first_cycle_steps=args.epochs * len(train_loader),
@@ -151,90 +140,95 @@ def train(args):
         gamma=1.0
     )
 
-    # 混合精度
-    scaler = GradScaler(device="cuda", enabled=args.use_fp16)
-
-    # 提前停止
-    early_stopping = EarlyStopping(
-        patience=args.patience, delta=args.min_delta)
+    # 混合精度、早停
+    scaler = GradScaler(enabled=args.use_fp16)
+    early_stopping = EarlyStopping(patience=args.patience, delta=args.min_delta)
 
     # WandB
-    wandb.init(
-        project=args.project_name,
-        config=vars(args),
-        entity=args.entity
-    )
+    wandb.init(project=args.project_name, config=vars(args), entity=args.entity)
+    post_processor = PosePostProcessor()
 
-    # 训练循环
     for epoch in range(1, args.epochs + 1):
+        # 记录时间
+        epoch_start = time.time()
+
+        # 训练
         model.train()
         train_loss = 0.0
         pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch}/{args.epochs} [Train]")
 
-        for imgs, masks, hm, paf, _, _, _ in train_loader:
-            imgs = imgs.to(device)
-            masks = masks.to(device)
-            hm = hm.to(device)
-            paf = paf.to(device)
+        for batch_idx, (imgs, masks, hm, paf, _, _, _) in enumerate(train_loader, start=1):
+            batch_start = time.time()
+            imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
 
             optimizer.zero_grad()
             if args.use_fp16:
-                # FP16 路径：AMP
-                with autocast(device_type="cuda", enabled=True):
+                with autocast(device_type='cuda', enabled=True):
                     seg_pred, pose_pred = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
-
-                print(">>> imgs:", imgs.shape, imgs.device)
-                print(">>> seg_pred:", seg_pred.shape, seg_pred.device)
-                print(">>> masks:", masks.shape, masks.device)
-                print(">>> pose_pred:", pose_pred.shape, pose_pred.device)
-                print(">>> hm:", hm.shape, hm.device)
-                print(">>> paf:", paf.shape, paf.device)
-                torch.cuda.synchronize()
-
-
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                # FP32 路径：正常反向
                 seg_pred, pose_pred = model(imgs)
                 loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 loss.backward()
                 optimizer.step()
 
-            # 学习率调度
             scheduler.step()
-
             train_loss += loss.item()
-            pbar.update(1)
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-            if pbar.n % args.log_interval == 0:
-                wandb.log({"train/loss": loss.item(), "epoch": epoch})
+            # 计算指标
+            batch_time = time.time() - batch_start
+            current_lr = scheduler.get_last_lr()[0]
+            total_norm = sum(p.grad.data.norm(2).item()**2 for p in model.parameters() if p.grad is not None)**0.5
+
+            if args.use_wandb:
+                wandb.log({
+                    'train/batch_loss': loss.item(),
+                    'train/lr': current_lr,
+                    'train/grad_norm': total_norm,
+                    'train/batch_time': batch_time
+                }, step=(epoch-1)*len(train_loader) + batch_idx)
+
+            pbar.update(1)
+            pbar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{current_lr:.2e}", 'bt': f"{batch_time:.2f}s"})
 
         pbar.close()
         avg_train_loss = train_loss / len(train_loader)
+        epoch_time = time.time() - epoch_start
 
         # 验证
+        val_start = time.time()
         model.eval()
         val_loss = 0.0
+
+        all_pred_masks, all_gt_masks = [], []
+        all_pred_kps, all_gt_kps   = [], []
         sample_seg_gts, sample_seg_preds = [], []
         sample_pose_gts, sample_pose_preds = [], []
         sample_sizes = []
 
         with torch.no_grad():
             for imgs, masks, hm, paf, _, _, sizes in val_loader:
-                imgs = imgs.to(device)
-                masks = masks.to(device)
-                hm = hm.to(device)
-                paf = paf.to(device)
-
-                with autocast(device_type="cuda", enabled=args.use_fp16):
+                imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
+                with autocast(device_type='cuda', enabled=args.use_fp16):
                     seg_pred, pose_pred = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
-
                 val_loss += loss.item()
+
+                # 收集用于 evaluator 和可视化
+                pred_mask = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy()
+                for i, pm in enumerate(pred_mask):
+                    h, w = sizes[i]
+                    pm_resized = cv2.resize(pm.squeeze(), (w, h), interpolation=cv2.INTER_NEAREST)
+                    all_pred_masks.append(pm_resized)
+                    all_gt_masks.append(masks[i].cpu().numpy().squeeze())
+
+                pred_kps = post_processor(pose_pred.cpu().numpy(), sizes)
+                gt_kps   = post_processor(hm.cpu().numpy(), sizes)
+                all_pred_kps.extend(pred_kps)
+                all_gt_kps.extend(gt_kps)
 
                 if len(sample_seg_gts) < args.val_viz_num:
                     sample_seg_gts.extend(masks.cpu().unbind())
@@ -244,29 +238,45 @@ def train(args):
                     sample_sizes.extend(sizes)
 
         avg_val_loss = val_loss / len(val_loader)
+        val_time = time.time() - val_start
 
+        # 计算 evaluator 指标
+        seg_iou  = SegmentationEvaluator(all_pred_masks, all_gt_masks)
+        kp_acc   = PoseEvaluator(all_pred_kps, all_gt_kps)
+
+        # WandB 日志
         if args.use_wandb:
             wandb.log({
-                "epoch": epoch,
-                "train/avg_loss": avg_train_loss,
-                "val/avg_loss": avg_val_loss
-            })
-            log_samples(
-                seg_gts=sample_seg_gts,
-                seg_preds=sample_seg_preds,
-                pose_gts=sample_pose_gts,
-                pose_preds=sample_pose_preds,
-                original_sizes=sample_sizes,
-                epoch=epoch
-            )
+                'train/avg_loss': avg_train_loss,
+                'val/avg_loss': avg_val_loss,
+                'train/epoch_time': epoch_time,
+                'val/epoch_time': val_time,
+                'val/seg_iou': seg_iou,
+                'val/kp_accuracy': kp_acc,
+                **{f"model/{n.replace('.', '/')}_hist": wandb.Histogram(p.detach().cpu().numpy())
+                   for n, p in model.named_parameters()}
+            }, step=epoch)
 
-        # EarlyStopping检查
+            wandb.log({f"Validation Samples Epoch {epoch}":
+                       log_samples(
+                           seg_gts=sample_seg_gts,
+                           seg_preds=sample_seg_preds,
+                           pose_gts=sample_pose_gts,
+                           pose_preds=sample_pose_preds,
+                           original_sizes=sample_sizes,
+                           epoch=epoch
+                       )}, step=epoch)
+
+        # EarlyStopping
         if early_stopping(avg_val_loss, model):
             print("Early stopping triggered")
             break
 
-    # 保存最终模型
+    # 保存模型
+    os.makedirs(args.output_dir, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pth"))
+
+    destroy_process_group()
 
 
 if __name__ == "__main__":
