@@ -33,7 +33,7 @@ _SKELETON = [
 ]
 
 class TeacherModel(nn.Module):
-    def __init__(self, num_keypoints: int = 17, num_pafs: int = 32,
+    def __init__(self, num_keypoints: int = 17, num_pafs: int = 38,
                  heatmap_thresh: float = 0.1, paf_score_thresh: float = 0.05):
         super().__init__()
         # 分割分支

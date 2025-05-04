@@ -87,7 +87,7 @@ class StudentModel(nn.Module):
     def forward(self, x):
         feats = self.features(x)  # [B,C,h/32,w/32]
         # Segmentation
-        seg_up = F.interpolate(feats, scale_factor=32, mode='bilinear', align_corners=False)
+        seg_up = F.interpolate(feats, scale_factor=38, mode='bilinear', align_corners=False)
         seg_logits = self.seg_head(seg_up)  # [B,1,H,W]
         # Pose maps
         hm_map = self.pose_hm(feats)        # [B,17,h,w]
