@@ -17,7 +17,7 @@ from early_stopping_pytorch import EarlyStopping
 
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn  # 导入数据集类
 from utils.loss import criterion
-from utils.Evaluator import SegmentationEvaluator,PoseEvaluator
+from utils.Evaluator import SegmentationEvaluator, PoseEvaluator
 from models.SegKP_Model import PosePostProcessor
 
 from config import arg_test, arg_real
@@ -148,6 +148,9 @@ def train(args):
     wandb.init(project=args.project_name, config=vars(args), entity=args.entity)
     post_processor = PosePostProcessor()
 
+    # Best AP
+    best_ap = -float('inf')
+
     for epoch in range(1, args.epochs + 1):
         # 记录时间
         epoch_start = time.time()
@@ -243,6 +246,14 @@ def train(args):
         # 计算 evaluator 指标
         seg_iou  = SegmentationEvaluator(all_pred_masks, all_gt_masks)
         kp_acc   = PoseEvaluator(all_pred_kps, all_gt_kps)
+
+        if kp_acc > best_ap:
+            best_ap = kp_acc
+            best_model_path = os.path.join(args.output_dir, "best_model.pth")
+            torch.save(model.state_dict(), best_model_path)
+            if args.use_wandb:
+                wandb.run.summary["best_kp_acc"] = kp_acc
+                wandb.save(best_model_path)
 
         # WandB 日志
         wandb.log({
