@@ -178,17 +178,23 @@ def train(args):
             paf = paf.to(device)
 
             optimizer.zero_grad()
-            with autocast(device_type="cuda", enabled=args.use_fp16):
+            if args.use_fp16:
+                # FP16 路径：AMP
+                with autocast(device_type="cuda", enabled=True):
+                    seg_pred, pose_pred = model(imgs)
+                    loss = criterion(seg_pred, masks, pose_pred, hm, paf)
+
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # FP32 路径：正常反向
                 seg_pred, pose_pred = model(imgs)
                 loss = criterion(seg_pred, masks, pose_pred, hm, paf)
+                loss.backward()
+                optimizer.step()
 
-            print("Loss:", loss.item(),
-                  "NaN?", torch.isnan(loss).any().item(),
-                  "Inf?", torch.isinf(loss).any().item())
-
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            # 学习率调度
             scheduler.step()
 
             train_loss += loss.item()

@@ -14,7 +14,7 @@ def arg_test():
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--min_delta', type=float, default=1e-5)
     parser.add_argument('--patience', type=int, default=2)
-    parser.add_argument('--use_fp16', action='store_true', default=False)
+    parser.add_argument('--use_fp16', action='store_true', default=True)
     parser.add_argument('--warmup_epochs', type=int, default=2)
     parser.add_argument('--val_viz_num', type=int, default=2)
     parser.add_argument('--num_workers', type=int, default=4)
