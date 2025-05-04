@@ -27,7 +27,7 @@ from utils.wandbLogger import WandbLogger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 
-def parse_args():
+def parse_args_test():
     parser = argparse.ArgumentParser(description="Seg→Pose Distill Training with Advanced Features")
     parser.add_argument('--data_dir', default='run/data', help='COCO 数据集根目录')
     parser.add_argument('--output_dir', default='run', help='输出文件目录')
@@ -62,7 +62,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def parse_args_r():
+def parse_args():
     parser = argparse.ArgumentParser(description="Seg→Pose Distill Training for B200 (512×512)")
 
     # 数据与输出
@@ -385,8 +385,6 @@ if __name__ == '__main__':
                 logger_t.log({
                     f'viz/teacher_{i}/GT_Segmentation': wandb.Image(d['GT_Segmentation']),
                     f'viz/teacher_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
-                    f'viz/teacher_{i}/Teacher_Heatmap': wandb.Image(d['Teacher_Heatmap']),
-                    f'viz/teacher_{i}/Teacher_PAF': wandb.Image(d['Teacher_PAF']),
                     f'viz/teacher_{i}/GT_Keypoints': wandb.Image(d['GT_Keypoints']),
                     f'viz/teacher_{i}/Teacher_Keypoints': wandb.Image(d['Teacher_Keypoints'])
                 }, step=epoch)
@@ -445,12 +443,8 @@ if __name__ == '__main__':
                 logger_s.log({
                     f'viz/student_{i}/GT_Segmentation': wandb.Image(d['GT_Segmentation']),
                     f'viz/student_{i}/Teacher_Segmentation': wandb.Image(d['Teacher_Segmentation']),
-                    f'viz/student_{i}/Teacher_Heatmap': wandb.Image(d['Teacher_Heatmap']),
-                    f'viz/student_{i}/Teacher_PAF': wandb.Image(d['Teacher_PAF']),
                     f'viz/student_{i}/Teacher_Keypoints': wandb.Image(d['Teacher_Keypoints']),
                     f'viz/student_{i}/Student_Segmentation': wandb.Image(d['Student_Segmentation']),
-                    f'viz/student_{i}/Student_Heatmap': wandb.Image(d['Student_Heatmap']),
-                    f'viz/student_{i}/Student_PAF': wandb.Image(d['Student_PAF']),
                     f'viz/student_{i}/Student_Keypoints': wandb.Image(d['Student_Keypoints']),
                     f'viz/student_{i}/GT_Keypoints': wandb.Image(d['GT_Keypoints'])
                 }, step=epoch)
