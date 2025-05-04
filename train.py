@@ -162,8 +162,7 @@ def train(args):
     wandb.init(
         project=args.project_name,
         config=vars(args),
-        entity=args.entity,
-        mode='offline' if args.offline_wandb else 'online'
+        entity=args.entity
     )
 
     # 训练循环
