@@ -201,7 +201,7 @@ def train(args):
 
         # 初始化收集列表
         all_pred_masks, all_gt_masks = [], []
-        all_heatmaps = []   # 原始预测 heatmaps (numpy arrays)
+        all_heatmaps = []
         sample_seg_gts, sample_seg_preds = [], []
         sample_pose_gts, sample_pose_preds = [], []
         orig_sizes = []
@@ -209,29 +209,25 @@ def train(args):
         with torch.no_grad():
             for imgs, masks, hm, paf, _, _, sizes in val_loader:
                 imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
-
                 with autocast(device_type='cuda', enabled=args.use_fp16):
                     seg_pred, pose_pred = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 val_loss += loss.item()
 
-                # 收集分割结果
                 pm = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy()
                 for b in range(pm.shape[0]):
-                    h, w    = masks[b,0].shape
+                    h_i, w_i = masks[b,0].shape
                     m_uint8 = pm[b,0].astype(np.uint8)
-                    m_res   = cv2.resize(m_uint8, (int(w), int(h)), interpolation=cv2.INTER_NEAREST)
+                    m_res   = cv2.resize(m_uint8, (w_i, h_i), interpolation=cv2.INTER_NEAREST)
                     all_pred_masks.append(m_res)
                     all_gt_masks.append(masks[b,0].cpu().numpy())
 
-                    # 样本可视化缓存
                     sample_seg_gts.append(masks[b])
                     sample_seg_preds.append(seg_pred[b])
                     sample_pose_gts.append(hm[b])
                     sample_pose_preds.append(pose_pred[b])
-                    orig_sizes.append((h, w))
+                    orig_sizes.append((h_i, w_i))
 
-                # 收集原始 heatmap
                 all_heatmaps.extend(pose_pred.cpu().numpy())
 
         avg_val_loss = val_loss / len(val_loader)
@@ -240,18 +236,14 @@ def train(args):
         # —— 分割 mIoU 评估 —— #
         seg_eval = SegmentationEvaluator(num_classes=2)
         for pm_arr, gt_arr in zip(all_pred_masks, all_gt_masks):
-            pm_t = torch.from_numpy(pm_arr).unsqueeze(0).unsqueeze(0)
-            gt_t = torch.from_numpy(gt_arr).unsqueeze(0).unsqueeze(0)
-            seg_eval.update(pm_t, gt_t)
+            seg_eval.update(torch.from_numpy(pm_arr[None,None,:,:]), torch.from_numpy(gt_arr[None,None,:,:]))
         seg_iou = seg_eval.compute_miou()
 
-        # —— 关键点 AP 评估 ——
+        # —— 关键点 AP 评估 —— #
         pose_eval = PoseEvaluator(ann_file, COCO_KEYPOINT_NAMES)
         batch_preds = []
         for img_id, hm_arr in enumerate(all_heatmaps):
-            # 先用 postprocessor 得到每个人的关键点坐标列表
             persons = post_proc(torch.from_numpy(hm_arr).unsqueeze(0))[0]
-            # 给每个检测到的人一个统一置信度
             scores = [1.0] * len(persons)
             batch_preds.append((img_id, persons, scores))
         pose_eval.update(batch_preds, None)
@@ -287,7 +279,7 @@ def train(args):
             }
         }, step=epoch)
 
-        # 样本可视化
+        # —— 样本可视化 —— #
         log_samples(
             sample_seg_gts, sample_seg_preds,
             sample_pose_gts, sample_pose_preds,
@@ -302,8 +294,10 @@ def train(args):
     # 最终模型保存
     os.makedirs(args.output_dir, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pth"))
-    destroy_process_group()
 
+    # Only destroy the process group if it was initialized
+    if torch.distributed.is_initialized():
+        destroy_process_group()
 
 
 
@@ -311,4 +305,7 @@ if __name__ == "__main__":
     args = arg_test()  # 或者 arg_real()
     os.makedirs(args.output_dir, exist_ok=True)
     train(args)
-    destroy_process_group()
+    # 再次尝试销毁（如果还在 initialized 状态）
+
+    if torch.distributed.is_initialized():
+        destroy_process_group()
