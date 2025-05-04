@@ -93,8 +93,14 @@ class PoseEvaluator:
         # 过滤掉不在 COCO GT 中的 image_id
         valid_ids = set(self.coco_gt.getImgIds())
         filtered_results = [r for r in self.results if r["image_id"] in valid_ids]
-        if len(filtered_results) < len(self.results):
-            print(f"Warning: Skipped {len(self.results) - len(filtered_results)} results with invalid image_id")
+        num_invalid = len(self.results) - len(filtered_results)
+        if num_invalid > 0:
+            print(f"Warning: Skipped {num_invalid} results with invalid image_id")
+
+        # 如果没有有效结果，跳过评估并返回0
+        if not filtered_results:
+            print("Warning: No valid pose detections available for evaluation.")
+            return 0.0
 
         # 加载并评估
         coco_dt = self.coco_gt.loadRes(filtered_results)
@@ -112,3 +118,5 @@ class PoseEvaluator:
         coco_eval.accumulate()
         coco_eval.summarize()
         return coco_eval.stats[0]
+
+
