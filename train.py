@@ -76,6 +76,7 @@ def log_samples(seg_gts, seg_preds, pose_gts, pose_preds, original_sizes, epoch,
 
 def train(args):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    ann_file = os.path.join(args.data_dir, "annotations", "person_keypoints_val2017.json")
 
     # 数据加载
     train_s = prepare_coco_dataset(args.data_dir, 'train', args.max_samples)
@@ -180,7 +181,7 @@ def train(args):
                             torch.from_numpy(gt).unsqueeze(0).unsqueeze(0))
         seg_iou = seg_eval.compute_miou()
 
-        pose_eval = PoseEvaluator(args.coco_ann_file, COCO_KEYPOINT_NAMES)
+        pose_eval = PoseEvaluator(ann_file, COCO_KEYPOINT_NAMES)
         # 构造 preds list (img_id, heatmaps, scores)
         preds=[]
         for img_id, persons in enumerate(all_pred_kps):
