@@ -54,6 +54,6 @@ def arg_real():
 
     # WandB参数
     parser.add_argument('--entity', default='joint_angle')
-    parser.add_argument('--project_name', default='_model')
+    parser.add_argument('--project_name', default='final')
 
     return parser.parse_args()

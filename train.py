@@ -302,7 +302,7 @@ def train(args):
 
 
 if __name__ == "__main__":
-    args = arg_test()  # 或者 arg_real()
+    args = arg_real()  # 或者 arg_real()
     os.makedirs(args.output_dir, exist_ok=True)
     train(args)
     # 再次尝试销毁（如果还在 initialized 状态）
