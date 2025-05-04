@@ -9,7 +9,7 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import tqdm
 import wandb
 
@@ -184,7 +184,7 @@ def main_worker(rank, world_size, args):
     )
 
     # 混合精度
-    scaler = GradScaler(enabled=args.use_fp16)
+    scaler = GradScaler(device="cuda", enabled=args.use_fp16)
 
     # EarlyStopping
     early_stopping = EarlyStopping(
@@ -215,7 +215,7 @@ def main_worker(rank, world_size, args):
 
             optimizer.zero_grad()
 
-            with autocast(enabled=args.use_fp16):
+            with autocast(device_type="cuda", enabled=args.use_fp16):
                 seg_pred, pose_pred = model(imgs)
                 loss = criterion(seg_pred, masks, pose_pred, hm, paf)
 
@@ -258,7 +258,7 @@ def main_worker(rank, world_size, args):
                 hm = hm.to(rank)
                 paf = paf.to(rank)
 
-                with autocast(enabled=args.use_fp16):
+                with autocast(device_type="cuda", enabled=args.use_fp16):
                     seg_pred, pose_pred = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
 
