@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from models.segmentation_model import SegFormerSegmentation
 from models.pose_model import ViTPoseModel
@@ -33,9 +34,9 @@ class TeacherModel(nn.Module):
     def __init__(
         self,
         seg_pretrained: str = "nvidia/segformer-b3-finetuned-ade-512-512",
-        pose_backbone: str = "vit_base_patch16_256",
+        pose_backbone: str = "vit_base_patch16_224",
         pose_pretrained: bool = True,
-        img_size: int = 256,
+        img_size: int = 480,
         num_keypoints: int = 17,
         num_pafs: int = 19,
         heatmap_thresh: float = 0.1,
@@ -69,11 +70,17 @@ class TeacherModel(nn.Module):
             multi_kps:  List[B] of lists of keypoint coords per person
         """
         # 1) 语义分割
-        seg_logits = self.segmentation(x)          # [B,1,H,W]
-        seg_mask = torch.sigmoid(seg_logits).detach()
-
-        # 2) 姿态预测
-        x_pose = torch.cat([x, seg_mask], dim=1)   # [B,4,H,W]
+        seg_logits = self.segmentation(x)          # [B,1,h_small,w_small]
+        seg_mask   = torch.sigmoid(seg_logits).detach()
+        
+        # ★ 新增：上采样到原图尺寸 ★
+        seg_mask_up = F.interpolate(
+            seg_mask, size=(x.shape[2], x.shape[3]),
+            mode='bilinear', align_corners=False
+        )
+        
+        # 拼接
+        x_pose = torch.cat([x, seg_mask_up], dim=1)   # [B,4,H,W]
         heatmaps, pafs = self.pose(x_pose)         # [B,K,h,w], [B,2L,h,w]
 
         # 3) Bottom-Up 解码生成多人体关键点集合
