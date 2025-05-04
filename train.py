@@ -184,6 +184,15 @@ def train(args):
                     seg_pred, pose_pred = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
 
+                print(">>> imgs:", imgs.shape, imgs.device)
+                print(">>> seg_pred:", seg_pred.shape, seg_pred.device)
+                print(">>> masks:", masks.shape, masks.device)
+                print(">>> pose_pred:", pose_pred.shape, pose_pred.device)
+                print(">>> hm:", hm.shape, hm.device)
+                print(">>> paf:", paf.shape, paf.device)
+                torch.cuda.synchronize()
+
+
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
