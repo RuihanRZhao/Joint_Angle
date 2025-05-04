@@ -165,15 +165,6 @@ class PosePostProcessor(nn.Module):
         return output
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
-
-from models.RepGhostBottleneck import RepGhostBottleneck
-from models.CoordinateAttention import CoordinateAttention
-from models.SegKP_Model import PosePostProcessor  # 如有需要调整导入路径
-
 class SegmentKeypointModel(nn.Module):
     def __init__(self):
         super().__init__()
