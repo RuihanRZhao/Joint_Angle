@@ -192,7 +192,7 @@ def train(args):
                 }, step=(epoch-1)*len(train_loader) + batch_idx)
 
             pbar.update(1)
-            pbar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{current_lr:.2e}", 'bt': f"{batch_time:.2f}s"})
+            pbar.set_postfix({'loss': f"{loss.item():.4f}", 'lr': f"{current_lr:.2e}", 'batch_time': f"{batch_time:.2f}s"})
 
         pbar.close()
         avg_train_loss = train_loss / len(train_loader)
