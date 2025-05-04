@@ -282,7 +282,13 @@ def run_one_epoch(model: nn.Module,
         if is_train and scaler is not None:
             autocast_ctx = torch.amp.autocast(device_type='cuda')
         else:
-            autocast_ctx = torch.no_grad() if not is_train else (lambda: s_seg, s_hm, s_paf, s_multi = model(imgs)th autocast_          s_seg, s_hm if teacher is None:
+            autocast_ctx = torch.no_grad() if not is_train else (lambda: (_ for _ in ()).throw)
+
+        with autocast_ctx:
+            s_seg, s_hm, s_paf, s_multi = model(imgs)
+
+            # compute loss
+        if teacher is None:
             loss_seg = losses['seg'](s_seg, masks)
             loss_hm = losses['hm'](s_hm, hm_lbl)
             loss_paf = losses['paf'](s_paf, paf_lbl)
@@ -297,10 +303,7 @@ def run_one_epoch(model: nn.Module,
             loss_seg = met['seg_loss']
             loss_hm = met['hm_loss']
             loss_paf = met['paf_loss']
-            loss_dist = met['distill_loss']paf,
-                    "pos_weight": args.pos_weight_tensor
-                }
-            )
+            loss_dist = met['distill_loss']
 
         # 反向传播
         if is_train:
