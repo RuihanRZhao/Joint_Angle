@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import mobilenet_v3_large
+from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
 
 
 class CoordinateAttention(nn.Module):
@@ -168,7 +168,7 @@ class PosePostProcessor(nn.Module):
 class SegmentKeypointModel(nn.Module):
     def __init__(self):
         super().__init__()
-        backbone = mobilenet_v3_large(pretrained=True)
+        backbone = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.DEFAULT)
         self.features = backbone.features
 
         # 结构优化

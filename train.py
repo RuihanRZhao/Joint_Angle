@@ -21,7 +21,7 @@ from early_stopping_pytorch import EarlyStopping
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn  # 导入数据集类
 from utils.loss import criterion
 from utils.visualization import overlay_mask, draw_keypoints_linked_multi
-from utils.postprocess import PosePostProcessor
+from models.SegKP_Model import PosePostProcessor
 
 from config import arg_test, arg_real
 
