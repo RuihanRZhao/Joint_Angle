@@ -244,27 +244,26 @@ def train(args):
         kp_acc   = PoseEvaluator(all_pred_kps, all_gt_kps)
 
         # WandB 日志
-        if args.use_wandb:
-            wandb.log({
-                'train/avg_loss': avg_train_loss,
-                'val/avg_loss': avg_val_loss,
-                'train/epoch_time': epoch_time,
-                'val/epoch_time': val_time,
-                'val/seg_iou': seg_iou,
-                'val/kp_accuracy': kp_acc,
-                **{f"model/{n.replace('.', '/')}_hist": wandb.Histogram(p.detach().cpu().numpy())
-                   for n, p in model.named_parameters()}
-            }, step=epoch)
+        wandb.log({
+            'train/avg_loss': avg_train_loss,
+            'val/avg_loss': avg_val_loss,
+            'train/epoch_time': epoch_time,
+            'val/epoch_time': val_time,
+            'val/seg_iou': seg_iou,
+            'val/kp_accuracy': kp_acc,
+            **{f"model/{n.replace('.', '/')}_hist": wandb.Histogram(p.detach().cpu().numpy())
+               for n, p in model.named_parameters()}
+        }, step=epoch)
 
-            wandb.log({f"Validation Samples Epoch {epoch}":
-                       log_samples(
-                           seg_gts=sample_seg_gts,
-                           seg_preds=sample_seg_preds,
-                           pose_gts=sample_pose_gts,
-                           pose_preds=sample_pose_preds,
-                           original_sizes=sample_sizes,
-                           epoch=epoch
-                       )}, step=epoch)
+        wandb.log({f"Validation Samples Epoch {epoch}":
+                   log_samples(
+                       seg_gts=sample_seg_gts,
+                       seg_preds=sample_seg_preds,
+                       pose_gts=sample_pose_gts,
+                       pose_preds=sample_pose_preds,
+                       original_sizes=sample_sizes,
+                       epoch=epoch
+                   )}, step=epoch)
 
         # EarlyStopping
         if early_stopping(avg_val_loss, model):
