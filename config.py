@@ -34,7 +34,7 @@ def arg_real():
     parser = argparse.ArgumentParser()
     # 数据参数
     parser.add_argument('--data_dir', default='run/data')
-    parser.add_argument('--output_dir', default='run')
+    parser.add_argument('--output_dir', default='run/output')
     parser.add_argument('--max_samples', type=int, default=None)
 
     # 训练参数
