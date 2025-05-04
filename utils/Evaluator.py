@@ -49,6 +49,8 @@ class PoseEvaluator:
         coco_kps = []
         for kps, score in zip(keypoints, scores):
             # 坐标缩放回原图尺寸
+            kps = np.asarray(keypoints, dtype=np.float32)
+
             x = kps[:, 0] * 4  # 假设输入256x256，输出64x64热图
             y = kps[:, 1] * 4
             v = np.ones(len(kps))  # 可见性设为1
