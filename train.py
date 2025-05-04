@@ -293,7 +293,7 @@ def train(args):
 
     # 最终模型保存
     os.makedirs(args.output_dir, exist_ok=True)
-    torch.save(model.state_dict(), os.path.join(args.output_dir, "model_final.pth"))
+    torch.save(model.state_dict(), os.path.join(args.output_dir, "models/model_final.pth"))
 
     # Only destroy the process group if it was initialized
     if torch.distributed.is_initialized():

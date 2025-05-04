@@ -6,7 +6,7 @@ def arg_test():
     # 数据参数
     parser.add_argument('--data_dir', default='run/data')
     parser.add_argument('--output_dir', default='run')
-    parser.add_argument('--max_samples', type=int, default=20)
+    parser.add_argument('--max_samples', type=int, default=100)
 
     # 训练参数
     parser.add_argument('--epochs', type=int, default=5)
