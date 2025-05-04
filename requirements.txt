@@ -14,7 +14,4 @@ wandb          # 训练可视化与日志
 pydantic<2.0.0
 pycocotools
 
---index-url https://download.pytorch.org/whl/cu128 --force-reinstall
-torch==2.7.0
-torchvision==0.22.0
-torchaudio==2.7.0
+tqdm

@@ -70,14 +70,14 @@ def parse_args():
     parser.add_argument('--output_dir', default='run', help='输出文件目录')
 
     # 训练轮数
-    parser.add_argument('--teacher_epochs', type=int, default=300, help='教师模型训练轮数')
+    parser.add_argument('--teacher_epochs', type=int, default=250, help='教师模型训练轮数')
     parser.add_argument('--student_epochs', type=int, default=100, help='学生蒸馏训练轮数')
 
     # 大分辨率下的 batch size
-    parser.add_argument('--batch_size', type=int, default=16, help='训练批大小 (512×512 建议 8–16)')
+    parser.add_argument('--batch_size', type=int, default=32, help='训练批大小 (480x480 建议 8–16)')
 
     # 学习率
-    parser.add_argument('--lr', type=float, default=1e-4, help='初始学习率')
+    parser.add_argument('--lr', type=float, default=5e-5, help='初始学习率')
 
     # 学习率调度器参数
     parser.add_argument('--scheduler', choices=['plateau', 'cosine'], default='plateau',
@@ -88,15 +88,15 @@ def parse_args():
     parser.add_argument('--cosine_eta_min', type=float, default=1e-6, help='CosineAnnealingLR 最低学习率')
 
     # EarlyStopping
-    parser.add_argument('--min_delta', type=float, default=1e-4, help='EarlyStopping 最小改进阈值')
-    parser.add_argument('--patience', type=int, default=10, help='EarlyStopping 耐心值（轮）')
+    parser.add_argument('--min_delta', type=float, default=1e-5, help='EarlyStopping 最小改进阈值')
+    parser.add_argument('--patience', type=int, default=25, help='EarlyStopping 耐心值（轮）')
 
     # Warmup & 可视化
     parser.add_argument('--warmup_epochs', type=int, default=10, help='线性 warmup 的 epoch 数')
     parser.add_argument('--val_viz_num', type=int, default=2, help='每轮上传至 WandB 的验证样本数量')
 
     # DataLoader 并行
-    parser.add_argument('--num_workers', type=int, default=32, help='DataLoader 并行 worker 数量')
+    parser.add_argument('--num_workers', type=int, default=24, help='DataLoader 并行 worker 数量')
 
     # 调试用
     parser.add_argument('--max_samples', type=int, default=None, help='最大加载样本数（快速验证）')
