@@ -214,7 +214,7 @@ class SegmentKeypointModel(nn.Module):
                 feats.append(h)
 
         # 2) 上采样到同一空间尺寸并拼接
-        target_size = feats[0].shape[2:]
+        target_size = feats[0].shape[2:]  # e.g. (H_feat, W_feat)
         feats = [
             F.interpolate(f, size=target_size, mode='bilinear', align_corners=False)
             for f in feats
@@ -222,24 +222,20 @@ class SegmentKeypointModel(nn.Module):
         fused = torch.cat(feats, dim=1)
         fused = self.fuse_conv(fused)
 
-        # 3) 分割头：先预测低分辨率 logits，再上采样到输入图尺寸
+        # 3) 分割头：先在 fused 上预测低分辨率 logits，再上采样到输入图尺寸
         seg_logits = self.seg_head(fused)
         seg_logits = F.interpolate(
             seg_logits,
-            size=(x.shape[2], x.shape[3]),
+            size=(x.shape[2], x.shape[3]),  # 恢复到原图 H×W
             mode='bilinear',
             align_corners=False
         )
 
-        # 4) 姿态头：始终返回 heatmap 张量（没有在 forward 内做 postprocess）
+        # 4) 姿态头：预测 low-res heatmap，并保持在 target_size
         pose_logits = self.pose_head(fused)
-        # 将 heatmap 上采样到 GT heatmap 所需分辨率
-        # 假设 postprocessor.stride 表示特征图到原图的步幅
-        out_h = x.shape[2] // self.postprocessor.stride
-        out_w = x.shape[3] // self.postprocessor.stride
         pose_pred = F.interpolate(
             pose_logits,
-            size=(out_h, out_w),
+            size=target_size,  # 与低分辨率特征图/heatmap GT 对齐
             mode='bilinear',
             align_corners=False
         )
