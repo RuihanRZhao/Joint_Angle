@@ -227,22 +227,6 @@ def run_one_epoch(model: nn.Module,
                   device: str = 'cpu',
                   scaler: torch.amp.GradScaler = None,
                   args=None):
-    """
-    执行一个 epoch 的训练或验证
-
-    Args:
-        model:      学生模型
-        loader:     DataLoader
-        losses:     dict, 包含 'seg','hm','paf','distill' 四个损失模块
-        optimizer:  优化器；若为 None 则为验证模式
-        teacher:    若不为 None，则进行蒸馏
-        device:     'cpu' or 'cuda'
-        scaler:     AMP GradScaler；若为 None 则不开混合精度
-        args:       传入命令行参数，用于读取权重系数等
-    Returns:
-        dict: 平均 loss 值，key 为 'train/seg','train/hm','train/paf','train/distill'
-              或 'validate/...'，取决于是否传入 optimizer
-    """
     is_train = optimizer is not None
     header   = 'train' if is_train else 'validate'
 

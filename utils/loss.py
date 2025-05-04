@@ -5,22 +5,88 @@ from typing import Tuple, List
 from torch import Tensor
 
 
+
 class SegmentationLoss(nn.Module):
     """
-    Binary segmentation loss using BCEWithLogits.
+    二分类分割损失：BCEWithLogits
     """
-
-    def __init__(self, pos_weight=None):
+    def __init__(self):
         super().__init__()
-        self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        self.criterion = nn.BCEWithLogitsLoss()
 
-    def forward(self, pred_logits: torch.Tensor, gt_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            pred_logits: [B,1,H,W] raw logits
-            gt_mask:     [B,1,H,W] binary mask (0 or 1)
+            logits: [B,1,H,W]  原始分割输出
+            targets: [B,1,H,W] 二值GT掩码
+        Returns:
+            loss: 标量张量
         """
-        return self.bce(pred_logits, gt_mask)
+        return self.criterion(logits, targets)
+
+
+class PoseLoss(nn.Module):
+    """
+    姿态估计损失，包含关键点热图的MSE和PAF的L1
+    """
+    def __init__(self):
+        super().__init__()
+        self.heatmap_loss = nn.MSELoss()
+        self.paf_loss     = nn.L1Loss()
+
+    def forward(self,
+                pred_heatmaps: torch.Tensor,
+                gt_heatmaps:   torch.Tensor,
+                pred_pafs:     torch.Tensor,
+                gt_pafs:       torch.Tensor
+               ) -> torch.Tensor:
+        """
+        Args:
+            pred_heatmaps: [B,K,H',W']  预测热图
+            gt_heatmaps:   [B,K,H',W']  GT热图
+            pred_pafs:     [B,2L,H',W'] 预测PAF
+            gt_pafs:       [B,2L,H',W'] GTPAF
+        Returns:
+            loss: 标量张量
+        """
+        loss_hm  = self.heatmap_loss(pred_heatmaps, gt_heatmaps)
+        loss_paf = self.paf_loss(pred_pafs,     gt_pafs)
+        return loss_hm + loss_paf
+
+
+class TotalLoss(nn.Module):
+    """
+    总损失 = lambda_seg * 分割损失 + lambda_pose * 姿态损失
+    """
+    def __init__(self, lambda_seg: float = 1.0, lambda_pose: float = 1.0):
+        super().__init__()
+        self.seg_loss   = SegmentationLoss()
+        self.pose_loss  = PoseLoss()
+        self.lambda_seg = lambda_seg
+        self.lambda_pose= lambda_pose
+
+    def forward(self,
+                seg_logits:   torch.Tensor,
+                seg_targets:  torch.Tensor,
+                heatmaps:     torch.Tensor,
+                gt_heatmaps:  torch.Tensor,
+                pafs:         torch.Tensor,
+                gt_pafs:      torch.Tensor
+               ) -> torch.Tensor:
+        """
+        Args:
+            seg_logits:  [B,1,H,W]      分割网络原始输出
+            seg_targets: [B,1,H,W]      分割GT
+            heatmaps:    [B,K,H',W']    预测热图
+            gt_heatmaps: [B,K,H',W']    GT热图
+            pafs:        [B,2L,H',W']   预测PAF
+            gt_pafs:     [B,2L,H',W']   GTPAF
+        Returns:
+            loss: 综合标量损失
+        """
+        loss_s = self.seg_loss(seg_logits, seg_targets)
+        loss_p = self.pose_loss(heatmaps, gt_heatmaps, pafs, gt_pafs)
+        return self.lambda_seg * loss_s + self.lambda_pose * loss_p
 
 
 class HeatmapLoss(nn.Module):
