@@ -18,7 +18,7 @@ from pycocotools.coco import COCO
 
 from models.teacher_model import TeacherModel
 from models.student_model import StudentModel
-from utils.loss import SegmentationLoss, HeatmapLoss, PAFLoss, DistillationLoss, compute_loss
+from utils.loss import SegmentationLoss, HeatmapLoss, PAFLoss, DistillationLoss
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn
 from utils.visualization import overlay_mask, draw_heatmap, draw_paf, draw_keypoints_linked_multi
 from utils.metrics import validate_all
