@@ -22,28 +22,11 @@ def prepare_coco_dataset(root_dir,
                          max_samples=None,
                          force_reload=False,
                          num_workers=8):
-    """
-    下载并准备 COCO 2017 数据集，返回包含 person segmentation + keypoints 的样本列表。
-    Args:
-        root_dir (str): 数据下载与缓存根目录
-        split (str): 'train' 或 'val'
-        max_samples (int, optional): 最多返回多少样本；默认不限制
-        force_reload (bool): 若为 True，强制重建缓存；否则有缓存直接加载
-        num_workers (int): 多线程数，用于加速样本处理
-    Returns:
-        List[Dict]: 每个 dict 包含：
-            {
-                'image_path': str,
-                'mask': np.ndarray (H×W),
-                'keypoints': np.ndarray (M×2),
-                'visibility': np.ndarray (M,)
-            }
-    """
     # —— URL & 目录配置 —— #
-    IMG_URL = f'http://images.cocodataset.org/zips/{split}2017.zip'
+    IMG_URL  = f'http://images.cocodataset.org/zips/{split}2017.zip'
     ANNO_URL = 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
-    img_dir = os.path.join(root_dir, 'images', f'{split}2017')
-    anno_dir = os.path.join(root_dir, 'annotations')
+    img_dir   = os.path.join(root_dir, 'images', f'{split}2017')
+    anno_dir  = os.path.join(root_dir, 'annotations')
     cache_file = os.path.join(root_dir, f'coco_{split}_samples.pkl')
 
     def mkdir_p(path):
@@ -57,14 +40,32 @@ def prepare_coco_dataset(root_dir,
         os.makedirs(os.path.dirname(target_zip), exist_ok=True)
         if check_file and os.path.isfile(check_file) and not force_reload:
             return
+
+        # 先下载并显示下载进度
         for attempt in range(1, max_retries+1):
+            # 如果已下载且不是坏的 zip，就跳过下载
             if not os.path.isfile(target_zip) or not zipfile.is_zipfile(target_zip):
-                urllib.request.urlretrieve(url, target_zip)
+                # 获取文件大小
+                u = urllib.request.urlopen(url)
+                total_size = int(u.headers.get('Content-Length', 0))
+                u.close()
+
+                with tqdm(total=total_size, unit='B', unit_scale=True,
+                          desc=f"Downloading {os.path.basename(target_zip)}") as pbar:
+                    def _hook(chunks_downloaded, chunk_size, total):
+                        pbar.update(chunk_size)
+                    urllib.request.urlretrieve(url, target_zip, reporthook=_hook)
+
+            # 解压，并显示解压进度
             try:
                 with zipfile.ZipFile(target_zip, 'r') as z:
-                    if check_file and not os.path.isfile(check_file):
-                        z.extractall(os.path.dirname(extract_to))
-                    break
+                    members = z.infolist()
+                    with tqdm(total=len(members),
+                              desc=f"Extracting {os.path.basename(target_zip)}") as pbar:
+                        for m in members:
+                            z.extract(m, os.path.dirname(extract_to))
+                            pbar.update(1)
+                break
             except zipfile.BadZipFile:
                 os.remove(target_zip)
                 if attempt == max_retries:
@@ -80,8 +81,9 @@ def prepare_coco_dataset(root_dir,
                          os.path.join(root_dir, 'annotations_trainval2017.zip'),
                          anno_dir, check_file=kp_json)
 
+    # 确认注释文件存在
     inst_file = os.path.join(anno_dir, f'instances_{split}2017.json')
-    kp_file   = os.path.join(anno_dir, f'person_keypoints_{split}2017.json')
+    kp_file   = kp_json
     for f in (inst_file, kp_file):
         if not os.path.isfile(f):
             raise FileNotFoundError(f"Missing file: {f}")
@@ -90,9 +92,7 @@ def prepare_coco_dataset(root_dir,
     if os.path.isfile(cache_file) and not force_reload:
         with open(cache_file, 'rb') as fp:
             samples = pickle.load(fp)
-        if max_samples:
-            samples = samples[:max_samples]
-        return samples
+        return samples[:max_samples] if max_samples else samples
 
     # —— 解析 COCO 注释 —— #
     coco_seg = COCO(inst_file)
@@ -100,11 +100,12 @@ def prepare_coco_dataset(root_dir,
     seg_ids = coco_seg.getAnnIds(catIds=[1], iscrowd=None)
     kp_ids  = set(coco_kp.getAnnIds(catIds=[1]))
 
-    # 按 image_id 聚合 ann
+    # 按 image_id 聚合 ann，并显示进度
     ann_map = {}
-    for ann in tqdm(coco_seg.loadAnns(seg_ids), desc=f"Building ann_map ({split})"):
-        aid = ann['id']
-        if aid in kp_ids:
+    for ann in tqdm(coco_seg.loadAnns(seg_ids),
+                    desc=f"Building ann_map ({split})",
+                    unit="ann"):
+        if ann['id'] in kp_ids:
             iid = ann['image_id']
             ann_map.setdefault(iid, []).append(ann)
 
@@ -124,7 +125,7 @@ def prepare_coco_dataset(root_dir,
             mask = np.maximum(mask, m)
             ann_kp = coco_kp.loadAnns([ann['id']])[0]
             kp = np.array(ann_kp['keypoints'], dtype=np.float32).reshape(-1,3)
-            kps_list.append(kp[:,:2])
+            kps_list .append(kp[:,:2])
             vis_list.append(kp[:,2].astype(np.int32))
         if kps_list:
             keypoints  = np.vstack(kps_list)
@@ -140,16 +141,17 @@ def prepare_coco_dataset(root_dir,
         }
 
     # 多线程并行处理并显示进度
+    samples = []
     with ThreadPool(num_workers) as pool:
-        samples = list(tqdm(pool.imap(process_image, image_ids),
-                            total=len(image_ids),
-                            desc=f"Processing {split} images"))
+        for sample in tqdm(pool.imap(process_image, image_ids),
+                           total=len(image_ids),
+                           desc=f"Processing {split} images"):
+            samples.append(sample)
 
     # 缓存到磁盘
     mkdir_p(os.path.dirname(cache_file))
     with open(cache_file, 'wb') as fp:
         pickle.dump(samples, fp, protocol=pickle.HIGHEST_PROTOCOL)
-
 
     print(f"[prepare_coco_dataset] split={split}, loaded {len(samples)} samples")
     return samples

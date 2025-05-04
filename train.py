@@ -27,7 +27,7 @@ from utils.wandbLogger import WandbLogger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 
-def parse_args_test():
+def parse_args():
     parser = argparse.ArgumentParser(description="Seg→Pose Distill Training with Advanced Features")
     parser.add_argument('--data_dir', default='run/data', help='COCO 数据集根目录')
     parser.add_argument('--output_dir', default='run', help='输出文件目录')
@@ -62,7 +62,7 @@ def parse_args_test():
     return parser.parse_args()
 
 
-def parse_args():
+def parse_args_real():
     parser = argparse.ArgumentParser(description="Seg→Pose Distill Training for B200 (512×512)")
 
     # 数据与输出
@@ -74,10 +74,10 @@ def parse_args():
     parser.add_argument('--student_epochs', type=int, default=100, help='学生蒸馏训练轮数')
 
     # 大分辨率下的 batch size
-    parser.add_argument('--batch_size', type=int, default=32, help='训练批大小 (480x480 建议 8–16)')
+    parser.add_argument('--batch_size', type=int, default=64, help='训练批大小 (480x480 建议 8–16)')
 
     # 学习率
-    parser.add_argument('--lr', type=float, default=5e-5, help='初始学习率')
+    parser.add_argument('--lr', type=float, default=1e-4, help='初始学习率')
 
     # 学习率调度器参数
     parser.add_argument('--scheduler', choices=['plateau', 'cosine'], default='plateau',
@@ -90,6 +90,9 @@ def parse_args():
     # EarlyStopping
     parser.add_argument('--min_delta', type=float, default=1e-5, help='EarlyStopping 最小改进阈值')
     parser.add_argument('--patience', type=int, default=25, help='EarlyStopping 耐心值（轮）')
+    
+    # 混合精度
+    parser.add_argument('--use_fp16', action='store_true', default=True, help='启用 torch.cuda.amp 混合精度')
 
     # Warmup & 可视化
     parser.add_argument('--warmup_epochs', type=int, default=10, help='线性 warmup 的 epoch 数')
@@ -148,7 +151,10 @@ def get_models_and_optim(args, device):
             opt_s, T_max=args.cosine_tmax, eta_min=args.cosine_eta_min)
 
     es_s = {'best_loss': float('inf'), 'counter': 0}
-    return teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s
+
+    scaler = torch.cuda.amp.GradScaler() if args.use_fp16 else None
+    
+    return teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s, scaler
 
 
 def visualize_batch(imgs, masks,
@@ -207,7 +213,7 @@ def visualize_batch(imgs, masks,
     return outputs
 
 
-def run_one_epoch(model, loader, losses, optimizer=None, teacher=None, device='cpu'):
+def run_one_epoch(model, loader, losses, optimizer=None, teacher=None, device='cpu', scaler=None):
     if optimizer is None:
         is_train = False
         header = 'validate'
@@ -244,7 +250,16 @@ def run_one_epoch(model, loader, losses, optimizer=None, teacher=None, device='c
                 t_seg, t_hm, t_paf, t_multi = teacher(imgs)
 
         # Student forward
-        s_seg, s_hm, s_paf, s_multi = model(imgs)
+        # 混合精度：前向包 in autocast，否则普通 forward
+        if scaler is not None:
+            with torch.cuda.amp.autocast():
+                s_seg, s_hm, s_paf, s_multi = model(imgs)
+                # 计算 loss 也放在 autocast 里
+                loss, met = compute_loss(...)  
+        else:
+            s_seg, s_hm, s_paf, s_multi = model(imgs)
+            loss, met = compute_loss(...)
+        
 
         # Compute loss
         if teacher is None:
@@ -266,8 +281,14 @@ def run_one_epoch(model, loader, losses, optimizer=None, teacher=None, device='c
 
         # Backward
         if is_train:
-            loss.backward()
-            optimizer.step()
+            if scaler is not None:
+                # scale-then-backward
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
         # Accumulate
         bs = imgs.size(0)
@@ -331,7 +352,7 @@ if __name__ == '__main__':
                         pin_memory=True)
 
     # Models & optimizers
-    teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s = get_models_and_optim(args, device)
+    teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s, scaler= get_models_and_optim(args, device)
 
     if args.dist:
         teacher = DDP(teacher, device_ids=[args.local_rank])
@@ -358,7 +379,7 @@ if __name__ == '__main__':
             metrics = run_one_epoch(
                 teacher, train_ld,
                 {'seg': seg_fn, 'hm': hm_fn, 'paf': paf_fn},
-                optimizer=opt_t, teacher=None, device=device
+                optimizer=opt_t, teacher=None, device=device, scaler=scaler
             )
             pck_stats = validate_all(
                 student, val_ld, device,
@@ -416,7 +437,7 @@ if __name__ == '__main__':
             metrics = run_one_epoch(
                 student, train_ld,
                 {'distill': dist_fn},
-                optimizer=opt_s, teacher=teacher, device=device
+                optimizer=opt_s, teacher=teacher, device=device, scaler=scaler
             )
             pck_stats = validate_all(
                 teacher, val_ld, device,
