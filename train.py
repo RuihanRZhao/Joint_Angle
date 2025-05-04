@@ -192,6 +192,7 @@ def main_worker(rank, world_size, args):
 
     # 仅在主进程初始化WandB
     if rank == 0:
+        wandb.login()
         wandb.init(
             project=f"{args.project_name}",
             config=vars(args),
