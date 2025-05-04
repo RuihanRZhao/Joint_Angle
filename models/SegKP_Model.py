@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
 
+from utils.Evaluator import PoseEvaluator
+
 
 class CoordinateAttention(nn.Module):
     """坐标注意力机制，替代原SE模块"""
@@ -199,6 +201,8 @@ class SegmentKeypointModel(nn.Module):
             nn.ReLU(),
             nn.Conv2d(256, 55, 1)
         )
+
+        self.postprocessor = PosePostProcessor()
 
     def forward(self, x):
         # 1) Backbone 特征提取
