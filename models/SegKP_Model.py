@@ -209,7 +209,6 @@ class SegmentKeypointModel(nn.Module):
             # 用我们的重参数化瓶颈替换掉原来的第一个 Conv
             self.features[i].block[0] = new_bottleneck
 
-
     def _replace_attention(self):
         # 替换SE模块为CoordinateAttention
         for i in [1, 4, 7, 10, 13, 16]:
