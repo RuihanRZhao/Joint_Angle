@@ -175,17 +175,28 @@ class SegmentKeypointModel(nn.Module):
         self._modify_bottlenecks()
         self._replace_attention()
 
+        # 动态计算分割头输入通道：取 backbone 在 forward 里拼接的那些层的 out_channels 之和
+        seg_in_chs = [
+            self.features[i].block[-1].out_channels
+            for i in (3, 6, 9)
+        ]
+        seg_in = sum(seg_in_chs)
+
         # 分割头
         self.seg_head = nn.Sequential(
-            nn.Conv2d(160, 64, 3, padding=1),
+            nn.Conv2d(seg_in, 64, 3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.Conv2d(64, 1, 1)
         )
 
+        # 动态计算姿态头输入通道（若与分割头相同，也可复用 seg_in）
+        pose_in_chs = seg_in_chs
+        pose_in = sum(pose_in_chs)
+
         # 姿态头
         self.pose_head = nn.Sequential(
-            nn.Conv2d(160, 256, 3, padding=1),
+            nn.Conv2d(pose_in, 256, 3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
             nn.Conv2d(256, 17, 1)
@@ -200,13 +211,10 @@ class SegmentKeypointModel(nn.Module):
             # block[0] 是 Conv2dNormActivation，它的第一个子模块才是 Conv2d
             conv0 = block[0][0]
             inp = conv0.in_channels
-            # block[0].out_channels 对应扩张通道数（hidden dim）
             hidden = block[0].out_channels
-            # block[-1] 通常是输出那条 1×1 卷积
             oup = block[-1].out_channels
 
             new_bottleneck = RepGhostBottleneck(inp, hidden, oup)
-            # 用我们的重参数化瓶颈替换掉原来的第一个 Conv
             self.features[i].block[0] = new_bottleneck
 
     def _replace_attention(self):
