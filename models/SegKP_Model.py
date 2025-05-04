@@ -168,17 +168,18 @@ class PosePostProcessor(nn.Module):
 class SegmentKeypointModel(nn.Module):
     def __init__(self):
         super().__init__()
+        from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
+        from models.SegKP_Model import PosePostProcessor
+
         backbone = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.DEFAULT)
         self.features = backbone.features
 
         # 选取合适的层索引
-        self.out_indices = [3, 6, 13]  # 以实际网络结构为准
-
-        # 获取每层输出通道
+        self.out_indices = [3, 6, 13]
         self.out_channels = [self.features[i].out_channels for i in self.out_indices]
         in_channels = sum(self.out_channels)
 
-        # 对齐通道
+        # 通道融合
         self.fuse_conv = nn.Sequential(
             nn.Conv2d(in_channels, 256, 1),
             nn.BatchNorm2d(256),
@@ -198,46 +199,47 @@ class SegmentKeypointModel(nn.Module):
             nn.Conv2d(256, 256, 3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 55, 1)  # 17个关键点 * 3 维度？
+            nn.Conv2d(256, 55, 1)
         )
 
-        self.postprocessor = PosePostProcessor()  # 你自己的后处理
+        # 后处理
+        self.postprocessor = PosePostProcessor()
 
     def forward(self, x):
-        # 逐层提取特征并保留指定 out_indices 的输出
-        feats = []
-        h = x
-        for idx, layer in enumerate(self.features):
-            h = layer(h)
-            if idx in self.out_indices:
-                feats.append(h)
+        # 原始尺寸
+        orig_h, orig_w = x.shape[2], x.shape[3]
 
-        # 将所有 feats 上采样到同样的空间尺寸（这里以 feats[0] 为基准）
-        target_size = feats[0].shape[2:]
+        # 提取特征
+        feats = []
+        h_feat = x
+        for idx, layer in enumerate(self.features):
+            h_feat = layer(h_feat)
+            if idx in self.out_indices:
+                feats.append(h_feat)
+
+        # 对齐到同一空间尺寸
+        target_h, target_w = feats[0].shape[2], feats[0].shape[3]
         feats = [
-            F.interpolate(f, size=target_size, mode='bilinear', align_corners=False)
+            F.interpolate(f, size=(target_h, target_w), mode='bilinear', align_corners=False)
             for f in feats
         ]
 
-        # 拼接和通道对齐
         fused = torch.cat(feats, dim=1)
         fused = self.fuse_conv(fused)
 
-        # 分割输出
+        # 分割预测：上采样回原图大小
+        seg_logits = self.seg_head(fused)
         seg_logits = F.interpolate(
-            self.seg_head(fused),
-            scale_factor=32,
+            seg_logits,
+            size=(orig_h, orig_w),
             mode='bilinear',
-            align_corners=True
+            align_corners=False
         )
 
-        # 姿态预测（训练返回热图，推理返回关键点）
-        pose_pred = F.interpolate(
-            self.pose_head(fused),
-            scale_factor=32,
-            mode='bilinear',
-            align_corners=True
-        )
+        # 姿态预测：输出与特征图大小相同（或上采样至热图大小）
+        pose_logits = self.pose_head(fused)
+        # 假设热图尺寸与特征图相同，可按需要调整 size
+        pose_pred = pose_logits
 
         if self.training:
             return seg_logits, pose_pred
