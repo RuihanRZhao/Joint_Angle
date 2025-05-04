@@ -202,6 +202,8 @@ class SegmentKeypointModel(nn.Module):
             nn.Conv2d(256, 55, 1)
         )
 
+        self.postprocessor = PosePostProcessor()
+
     def forward(self, x):
         # 1) Backbone 特征提取
         feats = []
