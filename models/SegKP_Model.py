@@ -197,15 +197,18 @@ class SegmentKeypointModel(nn.Module):
         # 替换前3个瓶颈块为RepGhost
         for i in [3, 6, 9]:
             block = self.features[i].block
-            inp = block[0].in_channels
-            hidden = block[0].hidden_channels
-            oup = block[0].out_channels
+            # block[0] 是 Conv2dNormActivation，它的第一个子模块才是 Conv2d
+            conv0 = block[0][0]
+            inp = conv0.in_channels
+            # block[0].out_channels 对应扩张通道数（hidden dim）
+            hidden = block[0].out_channels
+            # block[-1] 通常是输出那条 1×1 卷积
+            oup = block[-1].out_channels
 
-            new_block = RepGhostBottleneck(inp, hidden, oup)
-            self.features[i].block[0] = new_block
+            new_bottleneck = RepGhostBottleneck(inp, hidden, oup)
+            # 用我们的重参数化瓶颈替换掉原来的第一个 Conv
+            self.features[i].block[0] = new_bottleneck
 
-            # 替换动态卷积
-            self.features[i].block[1] = DynamicConv2d(oup, oup)
 
     def _replace_attention(self):
         # 替换SE模块为CoordinateAttention
