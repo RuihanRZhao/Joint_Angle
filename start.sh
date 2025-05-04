@@ -13,7 +13,7 @@ pip3 install \
     --index-url https://download.pytorch.org/whl/cu128 \
     --force-reinstall
 
-pip3 install -r requirements.txt
+
 # 安装完成后，简单验证
 echo "验证安装结果："
 python3 - <<'EOF'
@@ -24,4 +24,6 @@ from torchvision.ops import nms
 print("nms operator loaded:", callable(nms))
 EOF
 
-echo "完成！"
+
+pip3 install -r requirements.txt
+pip install 'git+https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup'

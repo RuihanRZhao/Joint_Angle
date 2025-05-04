@@ -95,3 +95,20 @@ class PoseEstimationLoss(nn.Module):
         num_valid = torch.sum(valid_keypoints) + self.eps
 
         return torch.sum(loss) / num_valid
+
+
+class Criterion(nn.Module):
+    """总损失函数封装"""
+
+    def __init__(self):
+        super().__init__()
+        self.seg_loss = SegmentationLoss()
+        self.pose_loss = PoseEstimationLoss()
+        self.adaptive_loss = AdaptiveMultiTaskLoss()
+
+    def forward(self, seg_pred, seg_gt, pose_pred, pose_gt):
+        l_seg = self.seg_loss(seg_pred, seg_gt)
+        l_pose = self.pose_loss(pose_pred, pose_gt)
+        return self.adaptive_loss([l_seg, l_pose])
+
+criterion = Criterion()

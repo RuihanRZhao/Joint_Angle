@@ -199,3 +199,5 @@ def visualize_sample(
     if multi_kps is not None and multi_vis is not None:
         outputs['keypoints'] = draw_keypoints_linked_multi(base, multi_kps, multi_vis)
     return outputs
+
+
