@@ -246,8 +246,8 @@ def train(args):
                     all_gt_masks.append(gt_m)
 
                 # —— 关键点结果收集 ——
-                pred_kps = postproc(pose_pred.cpu().numpy(), sizes)
-                gt_kps = postproc(hm.cpu().numpy(), sizes)
+                pred_kps = post_processor(pose_pred.cpu().numpy(), sizes)
+                gt_kps = post_processor(hm.cpu().numpy(), sizes)
                 all_pred_kps.extend(pred_kps)
                 all_gt_kps.extend(gt_kps)
 
@@ -256,8 +256,8 @@ def train(args):
         val_time = time.time() - val_start
 
         # —— 调用 evaluator 计算指标 ——
-        seg_ap = evaluate_segmentation(all_pred_masks, all_gt_masks)
-        kp_ap = evaluate_keypoints(all_pred_kps, all_gt_kps)
+        seg_ap = SegmentationEvaluator(all_pred_masks, all_gt_masks)
+        kp_acc = PoseEvaluator(all_pred_kps, all_gt_kps)
 
         if kp_acc > best_ap:
             best_ap = kp_acc
