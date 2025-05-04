@@ -13,12 +13,13 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 import wandb
 from tqdm import tqdm, trange
+import contextlib
 
 from pycocotools.coco import COCO
 
 from models.teacher_model import TeacherModel
 from models.student_model import StudentModel
-from utils.loss import SegmentationLoss, HeatmapLoss, PAFLoss, DistillationLoss
+from utils.loss import SegmentationLoss, PoseLoss, DistillationLoss
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn
 from utils.visualization import overlay_mask, draw_heatmap, draw_paf, draw_keypoints_linked_multi
 from utils.metrics import validate_all
@@ -235,23 +236,28 @@ def run_one_epoch(model: nn.Module,
         teacher.eval()
 
     # 用于累加
-    agg = {f'{header}/seg': 0.0,
-           f'{header}/hm':  0.0,
-           f'{header}/paf': 0.0,
-           f'{header}/distill': 0.0}
+    agg = {
+        f'{header}/seg':     0.0,
+        f'{header}/pose':    0.0,
+        f'{header}/distill': 0.0
+    }
     total_samples = 0
 
     for batch in tqdm(loader, desc=header.capitalize()):
         imgs, masks, hm_lbl, paf_lbl, gt_kps, gt_vis, _ = batch
         imgs, masks = imgs.to(device), masks.to(device)
         hm_lbl, paf_lbl = hm_lbl.to(device), paf_lbl.to(device)
-        
-        gt_kps = [k.to(device) if isinstance(k, torch.Tensor)
-                  else torch.from_numpy(k).float().to(device)
-                  for k in gt_kps]
-        gt_vis = [v.to(device) if isinstance(v, torch.Tensor)
-                  else torch.from_numpy(v).float().to(device)
-                  for v in gt_vis]
+
+        gt_kps = [
+            k.to(device) if isinstance(k, torch.Tensor)
+            else torch.from_numpy(k).float().to(device)
+            for k in gt_kps
+        ]
+        gt_vis = [
+            v.to(device) if isinstance(v, torch.Tensor)
+            else torch.from_numpy(v).float().to(device)
+            for v in gt_vis
+        ]
 
         if is_train:
             optimizer.zero_grad()
@@ -262,34 +268,33 @@ def run_one_epoch(model: nn.Module,
                 t_seg, t_hm, t_paf, *_ = teacher(imgs)
 
         # Student forward with/without AMP autocast
-        autocast_ctx = torch.amp.autocast(device_type='cuda') if scaler is not None else torch.no_grad()
-        # 如果是训练且有 scaler，则开启 autocast，否则用普通模式
         if is_train and scaler is not None:
             autocast_ctx = torch.amp.autocast(device_type='cuda')
+        elif not is_train:
+            autocast_ctx = torch.no_grad()
         else:
-            autocast_ctx = torch.no_grad() if not is_train else (lambda: (_ for _ in ()).throw)
+            # training without AMP
+            autocast_ctx = contextlib.nullcontext()
 
         with autocast_ctx:
             s_seg, s_hm, s_paf, s_multi = model(imgs)
 
             # compute loss
             if teacher is None:
-                loss_seg = losses['seg'](s_seg, masks)
-                loss_hm = losses['hm'](s_hm, hm_lbl)
-                loss_paf = losses['paf'](s_paf, paf_lbl)
+                # 分割损失
+                loss_seg  = losses['seg'](s_seg, masks)
+                # 姿态损失（heatmap + PAF 一起计算）
+                loss_pose = losses['pose'](s_hm, hm_lbl, s_paf, paf_lbl)
 
-                
-                loss = loss_seg + loss_hm + loss_paf
+                loss = loss_seg + loss_pose
                 loss_dist = torch.tensor(0.0, device=device)
 
                 met = {
                     'seg_loss':     loss_seg,
-                    'hm_loss':      loss_hm,
-                    'paf_loss':     loss_paf,
+                    'pose_loss':    loss_pose,
                     'distill_loss': loss_dist,
                 }
 
-                
             else:
                 loss, met = losses['distill'](
                     (s_seg, s_hm, s_paf),
@@ -297,8 +302,7 @@ def run_one_epoch(model: nn.Module,
                     (masks, gt_kps, gt_vis)
                 )
                 loss_seg = met['seg_loss']
-                loss_hm = met['hm_loss']
-                loss_paf = met['paf_loss']
+                loss_pose = met['pose_loss'] if 'pose_loss' in met else (met['hm_loss'] + met['paf_loss'])
                 loss_dist = met['distill_loss']
 
         # 反向传播
@@ -314,8 +318,7 @@ def run_one_epoch(model: nn.Module,
         # 累加各项 loss
         bs = imgs.size(0)
         agg[f'{header}/seg']     += met.get('seg_loss',     0.0).item() * bs
-        agg[f'{header}/hm']      += met.get('hm_loss',      0.0).item() * bs
-        agg[f'{header}/paf']     += met.get('paf_loss',     0.0).item() * bs
+        agg[f'{header}/pose']    += met.get('pose_loss',    0.0).item() * bs
         agg[f'{header}/distill'] += met.get('distill_loss', 0.0).item() * bs
         total_samples += bs
 
@@ -324,7 +327,6 @@ def run_one_epoch(model: nn.Module,
         agg[k] /= total_samples
 
     return agg
-
 
 
 
@@ -377,10 +379,10 @@ if __name__ == '__main__':
         teacher = DDP(teacher, device_ids=[args.local_rank])
         student = DDP(student, device_ids=[args.local_rank])
 
-    seg_fn = SegmentationLoss()  # 例如 BCEWithLogits 内部封装
-    hm_fn = HeatmapLoss()  # 负责 keypoint heatmap 的 L2/L1
-    paf_fn = PAFLoss()  # 负责 PAF 的 L2/L1
-    dist_fn = DistillationLoss()  # 负责蒸馏三项的综合
+    seg_fn = SegmentationLoss()
+    pose_fn = PoseLoss()  # 同时计算 heatmap MSE + paf L1
+    dist_fn = DistillationLoss()
+
 
     # WandB Logger for Teacher
     logger_t = WandbLogger(f"Teacher{args.project_name}", args.entity, config=vars(args))
@@ -397,7 +399,7 @@ if __name__ == '__main__':
             # Train & validate
             metrics = run_one_epoch(
                 teacher, train_ld,
-                {'seg': seg_fn, 'hm': hm_fn, 'paf': paf_fn},
+                {'seg': seg_fn, 'pose': pose_fn},
                 optimizer=opt_t, teacher=None, device=device, scaler=scaler
             )
             pck_stats = validate_all(
