@@ -98,17 +98,33 @@ class PoseEstimationLoss(nn.Module):
 
 
 class Criterion(nn.Module):
-    """总损失函数封装"""
+    """总损失函数封装（支持热图+PAF双监督）"""
 
     def __init__(self):
         super().__init__()
         self.seg_loss = SegmentationLoss()
-        self.pose_loss = PoseEstimationLoss()
-        self.adaptive_loss = AdaptiveMultiTaskLoss()
+        self.hm_loss = PoseEstimationLoss()  # 热图损失
+        self.paf_loss = PoseEstimationLoss(beta=0.5)  # PAF损失（调整参数）
+        self.adaptive_loss = AdaptiveMultiTaskLoss(num_tasks=2)  # 保持2个任务
 
-    def forward(self, seg_pred, seg_gt, pose_pred, pose_gt):
+    def forward(self, seg_pred, seg_gt, pose_pred, hm_gt, paf_gt):
+        """
+        参数说明:
+            pose_pred: 模型输出的姿态预测，应包含热图和PAF拼接
+                       [B, 17+34, H, W] (假设17个关键点热图+34个PAF通道)
+        """
+        # 拆分预测结果
+        hm_pred = pose_pred[:, :17]  # 热图预测
+        paf_pred = pose_pred[:, 17:]  # PAF预测
+
+        # 计算各项损失
         l_seg = self.seg_loss(seg_pred, seg_gt)
-        l_pose = self.pose_loss(pose_pred, pose_gt)
+        l_hm = self.hm_loss(hm_pred, hm_gt)
+        l_paf = self.paf_loss(paf_pred, paf_gt)
+
+        # 合并姿态损失（热图和PAF视为同一任务）
+        l_pose = 0.5 * l_hm + 0.5 * l_paf
+
         return self.adaptive_loss([l_seg, l_pose])
 
 criterion = Criterion()
