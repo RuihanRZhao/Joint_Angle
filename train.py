@@ -250,8 +250,8 @@ def train(args):
                     all_gt_masks.append(gt_m)
 
                 # —— 关键点结果收集 ——
-                pred_kps = post_processor(pose_pred.cpu().numpy())
-                gt_kps   = post_processor(hm.cpu().numpy())
+                pred_kps = post_processor(pose_pred.cpu())
+                gt_kps = post_processor(hm.cpu())
 
                 all_pred_kps.extend(pred_kps)
                 all_gt_kps.extend(gt_kps)
