@@ -4,9 +4,10 @@ import cv2
 import random
 import numpy as np
 import torch
+from torch.distributed import destroy_process_group
 from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
-import tqdm
+from tqdm import tqdm
 import wandb
 
 from utils.visualization import SKELETON
@@ -258,3 +259,4 @@ if __name__ == "__main__":
     # 启动多进程训练
     os.makedirs(args.output_dir, exist_ok=True)
     train(args)
+    destroy_process_group()
