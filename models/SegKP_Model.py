@@ -168,8 +168,6 @@ class PosePostProcessor(nn.Module):
 class SegmentKeypointModel(nn.Module):
     def __init__(self):
         super().__init__()
-        from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
-        from models.SegKP_Model import PosePostProcessor
 
         backbone = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.DEFAULT)
         self.features = backbone.features
@@ -202,50 +200,49 @@ class SegmentKeypointModel(nn.Module):
             nn.Conv2d(256, 55, 1)
         )
 
-        # 后处理
-        self.postprocessor = PosePostProcessor()
-
     def forward(self, x):
-        # 原始尺寸
-        orig_h, orig_w = x.shape[2], x.shape[3]
-
-        # 提取特征
+        # 1) Backbone 特征提取
         feats = []
-        h_feat = x
+        h = x
         for idx, layer in enumerate(self.features):
-            h_feat = layer(h_feat)
+            h = layer(h)
             if idx in self.out_indices:
-                feats.append(h_feat)
+                feats.append(h)
 
-        # 对齐到同一空间尺寸
-        target_h, target_w = feats[0].shape[2], feats[0].shape[3]
+        # 2) 上采样到同一空间尺寸并拼接
+        target_size = feats[0].shape[2:]
         feats = [
-            F.interpolate(f, size=(target_h, target_w), mode='bilinear', align_corners=False)
+            F.interpolate(f, size=target_size, mode='bilinear', align_corners=False)
             for f in feats
         ]
-
         fused = torch.cat(feats, dim=1)
         fused = self.fuse_conv(fused)
 
-        # 分割预测：上采样回原图大小
+        # 3) 分割头：先预测低分辨率 logits，再上采样到输入图尺寸
         seg_logits = self.seg_head(fused)
         seg_logits = F.interpolate(
             seg_logits,
-            size=(orig_h, orig_w),
+            size=(x.shape[2], x.shape[3]),
             mode='bilinear',
             align_corners=False
         )
 
-        # 姿态预测：输出与特征图大小相同（或上采样至热图大小）
+        # 4) 姿态头：始终返回 heatmap 张量（没有在 forward 内做 postprocess）
         pose_logits = self.pose_head(fused)
-        # 假设热图尺寸与特征图相同，可按需要调整 size
-        pose_pred = pose_logits
+        # 将 heatmap 上采样到 GT heatmap 所需分辨率
+        # 假设 postprocessor.stride 表示特征图到原图的步幅
+        out_h = x.shape[2] // self.postprocessor.stride
+        out_w = x.shape[3] // self.postprocessor.stride
+        pose_pred = F.interpolate(
+            pose_logits,
+            size=(out_h, out_w),
+            mode='bilinear',
+            align_corners=False
+        )
 
-        if self.training:
-            return seg_logits, pose_pred
-        else:
-            multi_kps = self.postprocessor(pose_pred)
-            return seg_logits, multi_kps
+        # 返回原始 logits / heatmap 张量，便于 criterion 调用
+        multi_kps = self.postprocessor(pose_pred)
+        return seg_logits, pose_pred, multi_kps
 
 
 
