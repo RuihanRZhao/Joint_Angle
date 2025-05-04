@@ -164,7 +164,7 @@ def train(args):
             optimizer.zero_grad()
             if args.use_fp16:
                 with autocast(device_type='cuda', enabled=True):
-                    seg_pred, pose_pred, multi_kps = model(imgs)
+                    seg_pred, pose_pred = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -212,7 +212,7 @@ def train(args):
             for imgs, masks, hm, paf, _, _, sizes in val_loader:
                 imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
                 with autocast(device_type='cuda', enabled=args.use_fp16):
-                    seg_pred, pose_pred, multi_kps = model(imgs)
+                    seg_pred, pose_pred = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 val_loss += loss.item()
 
@@ -224,7 +224,7 @@ def train(args):
                     all_pred_masks.append(pm_resized)
                     all_gt_masks.append(masks[i].cpu().numpy().squeeze())
 
-                pred_kps = multi_kps
+                pred_kps = post_processor(pose_pred.cpu().numpy(), sizes)
                 gt_kps   = post_processor(hm.cpu().numpy(), sizes)
                 all_pred_kps.extend(pred_kps)
                 all_gt_kps.extend(gt_kps)

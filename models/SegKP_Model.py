@@ -202,8 +202,6 @@ class SegmentKeypointModel(nn.Module):
             nn.Conv2d(256, 55, 1)
         )
 
-        self.postprocessor = PosePostProcessor()
-
     def forward(self, x):
         # 1) Backbone 特征提取
         feats = []
@@ -244,9 +242,7 @@ class SegmentKeypointModel(nn.Module):
             align_corners=False
         )
 
-        # 返回原始 logits / heatmap 张量，便于 criterion 调用
-        multi_kps = self.postprocessor(pose_pred)
-        return seg_logits, pose_pred, multi_kps
+        return seg_logits, pose_pred
 
 
 
