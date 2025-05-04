@@ -182,6 +182,10 @@ def train(args):
                 seg_pred, pose_pred = model(imgs)
                 loss = criterion(seg_pred, masks, pose_pred, hm, paf)
 
+            print("Loss:", loss.item(),
+                  "NaN?", torch.isnan(loss).any().item(),
+                  "Inf?", torch.isinf(loss).any().item())
+
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
