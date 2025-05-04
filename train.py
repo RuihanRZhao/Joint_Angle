@@ -28,7 +28,7 @@ from utils.wandbLogger import WandbLogger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 
-def parse_args():
+def parse_args_test():
     parser = argparse.ArgumentParser(description="Seg→Pose Distill Training with Advanced Features")
     parser.add_argument('--data_dir', default='run/data', help='COCO 数据集根目录')
     parser.add_argument('--output_dir', default='run', help='输出文件目录')
@@ -66,7 +66,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def parse_args_real():
+def parse_args():
     parser = argparse.ArgumentParser(description="Seg→Pose Distill Training for B200 (512×512)")
 
     # 数据与输出
@@ -261,6 +261,7 @@ def run_one_epoch(model: nn.Module,
         imgs, masks, hm_lbl, paf_lbl, gt_kps, gt_vis, _ = batch
         imgs, masks = imgs.to(device), masks.to(device)
         hm_lbl, paf_lbl = hm_lbl.to(device), paf_lbl.to(device)
+        
         gt_kps = [k.to(device) if isinstance(k, torch.Tensor)
                   else torch.from_numpy(k).float().to(device)
                   for k in gt_kps]
@@ -288,22 +289,33 @@ def run_one_epoch(model: nn.Module,
             s_seg, s_hm, s_paf, s_multi = model(imgs)
 
             # compute loss
-        if teacher is None:
-            loss_seg = losses['seg'](s_seg, masks)
-            loss_hm = losses['hm'](s_hm, hm_lbl)
-            loss_paf = losses['paf'](s_paf, paf_lbl)
-            loss = loss_seg + loss_hm + loss_paf
-            loss_dist = torch.tensor(0.0, device=device)
-        else:
-            loss, met = losses['distill'](
-                (s_seg, s_hm, s_paf),
-                (t_seg.detach(), t_hm.detach(), t_paf.detach()),
-                (masks, gt_kps, gt_vis)
-            )
-            loss_seg = met['seg_loss']
-            loss_hm = met['hm_loss']
-            loss_paf = met['paf_loss']
-            loss_dist = met['distill_loss']
+            if teacher is None:
+                loss_seg = losses['seg'](s_seg, masks)
+                loss_hm = losses['hm'](s_hm, hm_lbl)
+                loss_paf = losses['paf'](s_paf, paf_lbl)
+
+                
+                loss = loss_seg + loss_hm + loss_paf
+                loss_dist = torch.tensor(0.0, device=device)
+
+                met = {
+                    'seg_loss':     loss_seg,
+                    'hm_loss':      loss_hm,
+                    'paf_loss':     loss_paf,
+                    'distill_loss': loss_dist,
+                }
+
+                
+            else:
+                loss, met = losses['distill'](
+                    (s_seg, s_hm, s_paf),
+                    (t_seg.detach(), t_hm.detach(), t_paf.detach()),
+                    (masks, gt_kps, gt_vis)
+                )
+                loss_seg = met['seg_loss']
+                loss_hm = met['hm_loss']
+                loss_paf = met['paf_loss']
+                loss_dist = met['distill_loss']
 
         # 反向传播
         if is_train:
@@ -352,8 +364,10 @@ if __name__ == '__main__':
 
     print(f"Preparing train dataset...")
     train_s = prepare_coco_dataset(args.data_dir, 'train', max_samples=args.max_samples)
+    print(f"Train samples: {len(train_s)}.")
     print(f"Preparing val dataset...")
     val_s = prepare_coco_dataset(args.data_dir, 'val', max_samples=args.max_samples)
+    print(f"Val samples: {len(val_s)}.")
 
     train_ds = COCODataset(train_s)
     val_ds = COCODataset(val_s)
