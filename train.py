@@ -7,6 +7,7 @@ import logging
 import numpy as np
 import cv2
 import torch
+import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
@@ -17,7 +18,7 @@ from pycocotools.coco import COCO
 
 from models.teacher_model import TeacherModel
 from models.student_model import StudentModel
-from utils.loss import SegmentationLoss, HeatmapLoss, PAFLoss, DistillationLoss
+from utils.loss import SegmentationLoss, HeatmapLoss, PAFLoss, DistillationLoss, compute_loss
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn
 from utils.visualization import overlay_mask, draw_heatmap, draw_paf, draw_keypoints_linked_multi
 from utils.metrics import validate_all
@@ -47,6 +48,9 @@ def parse_args():
     parser.add_argument('--warmup_epochs', type=int, default=5, help='线性 warmup 的 epoch 数')
     parser.add_argument('--val_viz_num', type=int, default=3, help='每轮上传至 WandB 的验证样本数量')
     parser.add_argument('--num_workers', type=int, default=1, help='DataLoader 并行 worker 数量')
+    
+    # 混合精度
+    parser.add_argument('--use_fp16', action='store_true', default=True, help='启用 torch.cuda.amp 混合精度')
     # debug
     parser.add_argument('--max_samples', type=int, default=10, help='最大加载样本数（快速验证）')
     # distributed
@@ -152,7 +156,9 @@ def get_models_and_optim(args, device):
 
     es_s = {'best_loss': float('inf'), 'counter': 0}
 
-    scaler = torch.cuda.amp.GradScaler() if args.use_fp16 else None
+    scaler = torch.amp.GradScaler(
+        'cuda'
+    ) if args.use_fp16 else None
     
     return teacher, opt_t, sched_t, es_t, student, opt_s, sched_s, es_s, scaler
 
@@ -213,76 +219,107 @@ def visualize_batch(imgs, masks,
     return outputs
 
 
-def run_one_epoch(model, loader, losses, optimizer=None, teacher=None, device='cpu', scaler=None):
-    if optimizer is None:
-        is_train = False
-        header = 'validate'
-    else:
-        is_train = True
-        header = 'train'
+def run_one_epoch(model: nn.Module,
+                  loader: DataLoader,
+                  losses: dict,
+                  optimizer=None,
+                  teacher: nn.Module = None,
+                  device: str = 'cpu',
+                  scaler: torch.amp.GradScaler = None,
+                  args=None):
+    """
+    执行一个 epoch 的训练或验证
+
+    Args:
+        model:      学生模型
+        loader:     DataLoader
+        losses:     dict, 包含 'seg','hm','paf','distill' 四个损失模块
+        optimizer:  优化器；若为 None 则为验证模式
+        teacher:    若不为 None，则进行蒸馏
+        device:     'cpu' or 'cuda'
+        scaler:     AMP GradScaler；若为 None 则不开混合精度
+        args:       传入命令行参数，用于读取权重系数等
+    Returns:
+        dict: 平均 loss 值，key 为 'train/seg','train/hm','train/paf','train/distill'
+              或 'validate/...'，取决于是否传入 optimizer
+    """
+    is_train = optimizer is not None
+    header   = 'train' if is_train else 'validate'
 
     model.train() if is_train else model.eval()
-    if teacher:
+    if teacher is not None:
         teacher.eval()
 
-    agg = {
-        f'{header}/seg': 0.0,
-        f'{header}/hm': 0.0,
-        f'{header}/paf': 0.0,
-        f'{header}/distill': 0.0}
+    # 用于累加
+    agg = {f'{header}/seg': 0.0,
+           f'{header}/hm':  0.0,
+           f'{header}/paf': 0.0,
+           f'{header}/distill': 0.0}
     total_samples = 0
 
-    for batch in tqdm(loader, desc=('Train' if is_train else 'Eval')):
+    for batch in tqdm(loader, desc=header.capitalize()):
         imgs, masks, hm_lbl, paf_lbl, gt_kps, gt_vis, _ = batch
         imgs, masks = imgs.to(device), masks.to(device)
         hm_lbl, paf_lbl = hm_lbl.to(device), paf_lbl.to(device)
-        gt_kps = [k.to(device) if isinstance(k, torch.Tensor) else torch.from_numpy(k).float().to(device) for k in
-                  gt_kps]
-        gt_vis = [v.to(device) if isinstance(v, torch.Tensor) else torch.from_numpy(v).float().to(device) for v in
-                  gt_vis]
+        gt_kps = [k.to(device) if isinstance(k, torch.Tensor)
+                  else torch.from_numpy(k).float().to(device)
+                  for k in gt_kps]
+        gt_vis = [v.to(device) if isinstance(v, torch.Tensor)
+                  else torch.from_numpy(v).float().to(device)
+                  for v in gt_vis]
 
         if is_train:
             optimizer.zero_grad()
 
-        # Teacher forward for distillation
-        if teacher:
+        # Teacher forward (no grad)
+        if teacher is not None:
             with torch.no_grad():
-                t_seg, t_hm, t_paf, t_multi = teacher(imgs)
+                t_seg, t_hm, t_paf, *_ = teacher(imgs)
 
-        # Student forward
-        # 混合精度：前向包 in autocast，否则普通 forward
-        if scaler is not None:
-            with torch.cuda.amp.autocast():
-                s_seg, s_hm, s_paf, s_multi = model(imgs)
-                # 计算 loss 也放在 autocast 里
-                loss, met = compute_loss(...)  
+        # Student forward with/without AMP autocast
+        autocast_ctx = torch.amp.autocast(device_type='cuda') if scaler is not None else torch.no_grad()
+        # 如果是训练且有 scaler，则开启 autocast，否则用普通模式
+        if is_train and scaler is not None:
+            autocast_ctx = torch.amp.autocast(device_type='cuda')
         else:
-            s_seg, s_hm, s_paf, s_multi = model(imgs)
-            loss, met = compute_loss(...)
-        
+            autocast_ctx = torch.no_grad() if not is_train else (lambda: (_ for _ in ()).throw)
 
-        # Compute loss
-        if teacher is None:
-            loss_seg = losses['seg'](s_seg, masks)
-            loss_hm = losses['hm'](s_hm, hm_lbl)
-            loss_paf = losses['paf'](s_paf, paf_lbl)
-            loss = loss_seg + loss_hm + loss_paf
-            loss_dist = torch.tensor(0.0, device=device)
-        else:
-            loss, met = losses['distill'](
-                (s_seg, s_hm, s_paf),
-                (t_seg.detach(), t_hm.detach(), t_paf.detach()),
-                (masks, gt_kps, gt_vis)
+        with autocast_ctx:
+            s_seg, s_hm, s_paf, *_ = model(imgs)
+
+        # 组织参数并调用 compute_loss
+        student_out = (s_seg, s_hm, s_paf)
+        gt_data     = (masks, hm_lbl, paf_lbl)
+
+        if teacher is not None:
+            teacher_out = (t_seg, t_hm, t_paf)
+            loss, met = compute_loss(
+                student_out,
+                gt_data,
+                teacher_outputs=teacher_out,
+                use_distillation=True,
+                distill_kwargs={
+                    "alpha": args.alpha,
+                    "beta":  args.beta,
+                    "gamma": args.gamma
+                }
             )
-            loss_seg = met['seg_loss']
-            loss_hm = met['hm_loss']
-            loss_paf = met['paf_loss']
-            loss_dist = met['distill_loss']
+        else:
+            loss, met = compute_loss(
+                student_out,
+                gt_data,
+                use_distillation=False,
+                mtl_kwargs={
+                    "weight_seg": args.w_seg,
+                    "weight_hm":  args.w_hm,
+                    "weight_paf": args.w_paf,
+                    "pos_weight": args.pos_weight_tensor
+                }
+            )
 
-        # Backward
+        # 反向传播
         if is_train:
             if scaler is not None:
-                # scale-then-backward
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -290,22 +327,18 @@ def run_one_epoch(model, loader, losses, optimizer=None, teacher=None, device='c
                 loss.backward()
                 optimizer.step()
 
-        # Accumulate
+        # 累加各项 loss
         bs = imgs.size(0)
-        if teacher is None:
-            agg[f'{header}/seg'] += loss_seg.item() * bs
-            agg[f'{header}/hm'] += loss_hm.item() * bs
-            agg[f'{header}/paf'] += loss_paf.item() * bs
-        else:
-            agg[f'{header}/seg'] += loss_seg.item() * bs
-            agg[f'{header}/hm'] += loss_hm.item() * bs
-            agg[f'{header}/paf'] += loss_paf.item() * bs
-            agg[f'{header}/distill'] += loss_dist.item() * bs
+        agg[f'{header}/seg']     += met.get('seg_loss',     0.0).item() * bs
+        agg[f'{header}/hm']      += met.get('hm_loss',      0.0).item() * bs
+        agg[f'{header}/paf']     += met.get('paf_loss',     0.0).item() * bs
+        agg[f'{header}/distill'] += met.get('distill_loss', 0.0).item() * bs
         total_samples += bs
 
-    # Return average losses
+    # 取平均
     for k in agg:
         agg[k] /= total_samples
+
     return agg
 
 
