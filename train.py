@@ -17,7 +17,7 @@ from utils.loss import criterion
 from utils.Evaluator import SegmentationEvaluator, PoseEvaluator
 from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 from early_stopping_pytorch import EarlyStopping
-from args import arg_real
+from config import arg_real, arg_test
 
 
 def create_mask_visual(mask):
