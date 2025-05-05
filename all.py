@@ -349,8 +349,8 @@ if __name__ == '__main__':
     for name, value in vars(args).items():
         print(f"  {name:15s} = {value}")
 
-    print(f"Train samples:{len(train_ds)}")
-    print(f"Val samples:{len(val_ds)}")
+    print(f"  Train samples:\t{len(train_ds)}")
+    print(f"  Val samples:\t{len(val_ds)}")
     print(f"-------------------------------")
 
     wandb.init(project='Multi_Pose_test', entity="joint_angle",config=vars(args))
