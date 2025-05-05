@@ -139,7 +139,13 @@ def train(args):
             train_loss += loss.item()
             # Batch 日志
             lr = optimizer.param_groups[0]['lr']
-            grad_norm = torch.sqrt(sum(p.grad.norm(2).item()**2 for p in model.parameters() if p.grad is not None))
+
+            total_norm_sqr = torch.zeros(1, device=device)
+            for p in model.parameters():
+                if p.grad is not None:
+                    total_norm_sqr += p.grad.norm(2) ** 2
+            grad_norm = torch.sqrt(total_norm_sqr).item()
+
             wandb.log({
                 'train/loss': loss.item(),
                 'train/lr':   lr,
