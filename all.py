@@ -432,11 +432,16 @@ def evaluate(model, val_loader, device):
                 # 如果需要，可视化前 n_vis 张验证结果
                 if vis_count < getattr(wandb.config, 'n_vis', 0):
                     img_info = coco_gt.loadImgs([img_id])[0]
-                    img_path = os.path.join(val_loader.dataset.root, val_loader.dataset.img_folder, img_info['file_name'])
+                    img_path = os.path.join(val_loader.dataset.root,
+                                            val_loader.dataset.img_folder,
+                                            img_info['file_name'])
                     orig_img = cv2.imread(img_path)
                     if orig_img is None:
                         orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
-                    # 为每个检测到的人实例绘制骨架
+                    # —— 在这里统一 resize ——
+                    target_h, target_w = val_loader.dataset.img_size
+                    orig_img = cv2.resize(orig_img, (target_w, target_h))
+
                     for person in persons:
                         color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
                         # 画骨架连线
@@ -590,7 +595,7 @@ if __name__ == '__main__':
             'epoch_time': epoch_time,
             'lr': current_lr,
             'gpu_mem_used': torch.cuda.memory_allocated() / (1024**3) if torch.cuda.is_available() else 0
-        })
+        }, commit=False)
         # Log parameter & gradient histograms
         for name, param in model.named_parameters():
             wandb.log({f"param/{name}": wandb.Histogram(param.detach().cpu().numpy()),
