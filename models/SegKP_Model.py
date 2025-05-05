@@ -229,14 +229,9 @@ class SegmentKeypointModel(nn.Module):
             mode='bilinear', align_corners=False
         )
 
-        # 根据模式不同返回不同输出
-        if self.training:
-            # 训练时返回原始 heatmap（用于计算损失）
-            return seg_logits, pose_pred, _
-        else:
-            # 推理时后处理热图得到关键点坐标
-            multi_kps = self.postprocessor(pose_pred)
-            return seg_logits, pose_pred, multi_kps
+        # 推理时后处理热图得到关键点坐标
+        multi_kps = self.postprocessor(pose_pred)
+        return seg_logits, pose_pred, multi_kps
 
 
 
