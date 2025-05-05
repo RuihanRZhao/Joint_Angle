@@ -422,23 +422,35 @@ def main():
             with torch.no_grad():
                 heat_pred = model(inp)[0].cpu().numpy()
 
-            img_np = (img.permute(1,2,0).numpy() * np.array([0.229,0.224,0.225]) +
-                      np.array([0.485,0.456,0.406]))
+            img_np = (img.permute(1, 2, 0).numpy() * np.array([0.229, 0.224, 0.225]) +
+                      np.array([0.485, 0.456, 0.406]))
             img_np = np.clip(img_np, 0, 1)
 
-            # Extract GT / pred keypoints for visualization
-            gt_pts = np.stack(np.where(
-                heat_gt.numpy() == heat_gt.max(dim=-1, keepdim=True)[0].max(dim=-2)[0]
-            ))[::-1].T
-            pred_pts = np.stack(np.where(
-                heat_pred == heat_pred.max(axis=1, keepdims=True).max(axis=2)[0]
-            ))[::-1].T
+            # Extract GT keypoints with dual keepdim to ensure correct broadcasting
+            max_per_channel = (
+                heat_gt
+                .max(dim=-1, keepdim=True)[0]  # → [K, H, 1]
+                .max(dim=-2, keepdim=True)[0]  # → [K, 1, 1]
+            )
+            gt_pts = np.stack(
+                np.where(heat_gt.numpy() == max_per_channel.numpy())
+            )[::-1].T
+
+            # Extract Pred keypoints using NumPy with keepdims on both axes
+            max_per_pred = (
+                heat_pred
+                .max(axis=2, keepdims=True)  # → [K, H, 1]
+                .max(axis=1, keepdims=True)  # → [K, 1, 1]
+            )
+            pred_pts = np.stack(
+                np.where(heat_pred == max_per_pred)
+            )[::-1].T
 
             img_vis = img_np.copy()
-            for (x,y) in gt_pts:
-                cv2.circle(img_vis, (int(x), int(y)), 2, (0,1,0), -1)  # GT: green
-            for (x,y) in pred_pts:
-                cv2.circle(img_vis, (int(x), int(y)), 2, (1,0,0), -1)  # Pred: red
+            for (x, y) in gt_pts:
+                cv2.circle(img_vis, (int(x), int(y)), 2, (0, 1, 0), -1)  # GT: green
+            for (x, y) in pred_pts:
+                cv2.circle(img_vis, (int(x), int(y)), 2, (1, 0, 0), -1)  # Pred: red
 
             vis_list.append(wandb.Image(img_vis,
                                         caption=f"GT vs Pred (epoch {epoch})"))
