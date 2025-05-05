@@ -301,136 +301,122 @@ class COCOPoseDataset(torch.utils.data.Dataset):
 def evaluate(model, val_loader, device):
     """
     Evaluate the model on the COCO validation set and compute keypoint AP.
-    Returns mean AP and AP@0.5, along with visualization images.
+    Returns mean AP, AP@0.5, and a list of WandB images (randomly sampled) showing GT vs Pred.
     """
     model.eval()
     coco_gt = val_loader.dataset.coco
     results = []
     img_ids = []
+    # 随机抽取 n_vis 张图用于可视化
+    n_vis = getattr(wandb.config, 'n_vis', 3)
+    all_ids = val_loader.dataset.img_ids
+    vis_img_ids = random.sample(all_ids, min(n_vis, len(all_ids)))
     vis_list = []
-    vis_count = 0
+
+    idx_offset = 0
     with torch.no_grad():
-        count = 0
-        for imgs, _, _ in val_loader:  # 忽略 GT 标签，仅用模型预测
+        for imgs, _, _ in val_loader:
             imgs = imgs.to(device)
-            heat_pred, paf_pred = model(imgs)  # 输出 (heatmap, paf)
+            heat_pred, paf_pred = model(imgs)
             B = imgs.size(0)
-            H = heat_pred.shape[2]
-            W = heat_pred.shape[3]
-            # 逐张图像处理
+            H, W = heat_pred.shape[2], heat_pred.shape[3]
+
             for i in range(B):
-                img_id = val_loader.dataset.img_ids[count + i]
+                img_id = val_loader.dataset.img_ids[idx_offset + i]
                 img_ids.append(img_id)
-                heat = heat_pred[i].cpu().numpy()   # (17, H, W)
-                paf   = paf_pred[i].cpu().numpy()    # (2*L, H, W)
-                # 提取关键点候选峰值坐标
-                all_peaks = []  # 每个关键点类型的候选点列表
-                peak_threshold = 0.1
+
+                # 转为 numpy
+                heat = heat_pred[i].cpu().numpy()  # (17, H, W)
+                paf = paf_pred[i].cpu().numpy()   # (2*L, H, W)
+
+                # 1. 检测所有关键点候选峰值
+                all_peaks = []
+                peak_thresh = 0.1
                 for k in range(heat.shape[0]):
                     hmap = heat[k]
                     hmap_max = maximum_filter(hmap, size=3)
-                    peaks_mask = (hmap == hmap_max) & (hmap > peak_threshold)
-                    peaks = np.array(np.nonzero(peaks_mask)).T  # [[y,x], ...]
-                    peak_pts = [(float(x), float(y), float(hmap[int(y), int(x)])) for (y, x) in peaks]
-                    all_peaks.append(peak_pts)
-                # 建立肢体连接候选对
+                    peaks_mask = (hmap == hmap_max) & (hmap > peak_thresh)
+                    coords = np.array(np.nonzero(peaks_mask)).T  # [[y,x],...]
+                    peaks = [(float(x), float(y), float(hmap[int(y), int(x)])) for y, x in coords]
+                    all_peaks.append(peaks)
+
+                # 2. 基于 PAF 生成骨骼连接候选，并做贪心筛选
                 connection_candidates = {c: [] for c in range(len(COCO_PERSON_SKELETON))}
                 for c, (a, b) in enumerate(COCO_PERSON_SKELETON):
-                    candA = all_peaks[a]
-                    candB = all_peaks[b]
-                    if len(candA) == 0 or len(candB) == 0:
+                    candA, candB = all_peaks[a], all_peaks[b]
+                    if not candA or not candB:
                         continue
-                    paf_x_map = paf[2*c]
-                    paf_y_map = paf[2*c+1]
-                    for idx_a, peakA in enumerate(candA):
-                        for idx_b, peakB in enumerate(candB):
-                            ax, ay, scoreA = peakA
-                            bx, by, scoreB = peakB
-                            dx = bx - ax
-                            dy = by - ay
-                            norm = np.sqrt(dx**2 + dy**2) + 1e-8
-                            vx = dx / norm
-                            vy = dy / norm
-                            # 在线段上均匀采样若干点，计算平均PAF对齐得分
-                            num_samples = 10
-                            xs = np.linspace(ax, bx, num_samples).astype(int)
-                            ys = np.linspace(ay, by, num_samples).astype(int)
-                            vec_scores = []
-                            for (xx, yy) in zip(xs, ys):
+                    paf_x = paf[2*c]
+                    paf_y = paf[2*c+1]
+                    for ia, (ax, ay, sa) in enumerate(candA):
+                        for ib, (bx, by, sb) in enumerate(candB):
+                            dx, dy = bx-ax, by-ay
+                            norm = np.sqrt(dx*dx + dy*dy) + 1e-8
+                            vx, vy = dx/norm, dy/norm
+                            samples = 10
+                            xs = np.linspace(ax, bx, samples).astype(int)
+                            ys = np.linspace(ay, by, samples).astype(int)
+                            scores = []
+                            for xx, yy in zip(xs, ys):
                                 if 0 <= xx < W and 0 <= yy < H:
-                                    vec = np.array([paf_x_map[yy, xx], paf_y_map[yy, xx]])
-                                    score = vec.dot(np.array([vx, vy]))
-                                    vec_scores.append(score)
-                            if len(vec_scores) == 0:
+                                    vec = np.array([paf_x[yy, xx], paf_y[yy, xx]])
+                                    scores.append(vec.dot([vx, vy]))
+                            if not scores:
                                 continue
-                            score_mean = np.mean(vec_scores)
-                            # 至少80%的采样点得分大于0.05
-                            if score_mean > 0 and np.mean(np.array(vec_scores) > 0.05) > 0.8:
-                                total_score = score_mean + 0.5 * (scoreA + scoreB)
-                                connection_candidates[c].append((idx_a, idx_b, total_score))
-                    # 贪心筛选最佳匹配连接
+                            mean_score = np.mean(scores)
+                            if mean_score > 0 and np.mean(np.array(scores) > 0.05) > 0.8:
+                                total = mean_score + 0.5*(sa + sb)
+                                connection_candidates[c].append((ia, ib, total))
+                    # 贪心筛选
                     connection_candidates[c].sort(key=lambda x: x[2], reverse=True)
-                    usedA = set()
-                    usedB = set()
-                    final_conn = []
-                    for idx_a, idx_b, score in connection_candidates[c]:
-                        if idx_a not in usedA and idx_b not in usedB:
-                            final_conn.append((idx_a, idx_b))
-                            usedA.add(idx_a)
-                            usedB.add(idx_b)
-                    connection_candidates[c] = final_conn
-                # 组装多人骨架（合并所有连接）
+                    usedA, usedB = set(), set()
+                    conns = []
+                    for ia, ib, _ in connection_candidates[c]:
+                        if ia not in usedA and ib not in usedB:
+                            conns.append((ia, ib))
+                            usedA.add(ia); usedB.add(ib)
+                    connection_candidates[c] = conns
+
+                # 3. 组装多人骨架
                 persons = []
                 for c, (a, b) in enumerate(COCO_PERSON_SKELETON):
-                    if c not in connection_candidates:
-                        continue
-                    for (idx_a, idx_b) in connection_candidates.get(c, []):
-                        assigned = False
-                        for person in persons:
-                            # 如果当前连接的任一关键点已在某人中，则将另一个关键点加入该人
-                            if a in person and person[a] == idx_a:
-                                person[b] = idx_b
-                                assigned = True
-                                break
-                            if b in person and person[b] == idx_b:
-                                person[a] = idx_a
-                                assigned = True
-                                break
-                        # 若此连接不属于任何已有 person，则创建新 person
-                        if not assigned:
-                            new_person = {a: idx_a, b: idx_b}
-                            persons.append(new_person)
-                # 将未连接到任何骨架的孤立关键点也作为独立 person
-                for k in range(len(all_peaks)):
-                    for idx_peak in range(len(all_peaks[k])):
-                        already_assigned = any((k in person and person[k] == idx_peak) for person in persons)
-                        if not already_assigned:
+                    for ia, ib in connection_candidates[c]:
+                        placed = False
+                        for p in persons:
+                            if a in p and p[a] == ia:
+                                p[b] = ib; placed = True; break
+                            if b in p and p[b] == ib:
+                                p[a] = ia; placed = True; break
+                        if not placed:
+                            persons.append({a: ia, b: ib})
+                # 将孤立点加入
+                for k, peaks in enumerate(all_peaks):
+                    for idx_peak in range(len(peaks)):
+                        if not any(k in p and p[k]==idx_peak for p in persons):
                             persons.append({k: idx_peak})
-                # 生成每个人的 COCO 格式 keypoints 列表
-                for person in persons:
-                    keypoints = []
-                    scores = []
-                    for kp_idx in range(len(all_peaks)):
-                        if kp_idx in person:
-                            peak_idx = person[kp_idx]
-                            x, y, score_val = all_peaks[kp_idx][peak_idx]
-                            # 将关键点坐标缩放回原图坐标系
-                            orig = coco_gt.loadImgs([img_id])[0]
-                            x_orig = x * (orig['width'] / float(W))
-                            y_orig = y * (orig['height'] / float(H))
+
+                # 4. 构造 COCO 格式 results
+                for p in persons:
+                    kps, ks = [], []
+                    orig = coco_gt.loadImgs([img_id])[0]
+                    for k in range(len(all_peaks)):
+                        if k in p:
+                            x, y, sc = all_peaks[k][p[k]]
+                            x = x * (orig['width']/W)
+                            y = y * (orig['height']/H)
                         else:
-                            x_orig, y_orig, score_val = 0.0, 0.0, 0.0
-                        keypoints.extend([float(x_orig), float(y_orig), float(score_val)])
-                        scores.append(score_val)
-                    person_score = float(np.mean(scores)) if scores else 0.0
+                            x, y, sc = 0.0, 0.0, 0.0
+                        kps.extend([float(x), float(y), float(sc)])
+                        ks.append(sc)
                     results.append({
-                        "image_id": img_id,
-                        "category_id": 1,
-                        "keypoints": keypoints,
-                        "score": person_score
+                        'image_id': img_id,
+                        'category_id': 1,
+                        'keypoints': kps,
+                        'score': float(np.mean(ks))
                     })
-                # 如果需要，可视化前 n_vis 张验证结果
-                if vis_count < getattr(wandb.config, 'n_vis', 0):
+
+                # 5. 可视化：仅对选中的 vis_img_ids
+                if img_id in vis_img_ids:
                     img_info = coco_gt.loadImgs([img_id])[0]
                     img_path = os.path.join(val_loader.dataset.root,
                                             val_loader.dataset.img_folder,
@@ -438,39 +424,54 @@ def evaluate(model, val_loader, device):
                     orig_img = cv2.imread(img_path)
                     if orig_img is None:
                         orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
-                    # —— 在这里统一 resize ——
-                    target_h, target_w = val_loader.dataset.img_size
-                    orig_img = cv2.resize(orig_img, (target_w, target_h))
+                    # resize to input size
+                    th, tw = val_loader.dataset.img_size
+                    orig_img = cv2.resize(orig_img, (tw, th))
+                    # 先画 GT
+                    anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None))
+                    for ann in anns:
+                        if ann['num_keypoints'] == 0: continue
+                        pts = []
+                        for i in range(17):
+                            x, y, v = ann['keypoints'][3*i:3*i+3]
+                            if v>0:
+                                px = int(x * (tw/orig_img.shape[1]))
+                                py = int(y * (th/orig_img.shape[0]))
+                                pts.append((px,py))
+                            else:
+                                pts.append(None)
+                        for a,b in COCO_PERSON_SKELETON:
+                            if pts[a] and pts[b]:
+                                cv2.line(orig_img, pts[a], pts[b], (0,255,0), 2)
+                        for p in pts:
+                            if p: cv2.circle(orig_img, p, 3, (0,255,0), -1)
+                    # 再画 Pred
+                    for p in persons:
+                        for a,b in COCO_PERSON_SKELETON:
+                            if a in p and b in p:
+                                xa, ya, _ = all_peaks[a][p[a]]
+                                xb, yb, _ = all_peaks[b][p[b]]
+                                xa, ya = int(xa*(tw/W)), int(ya*(th/H))
+                                xb, yb = int(xb*(tw/W)), int(yb*(th/H))
+                                cv2.line(orig_img, (xa,ya), (xb,yb), (0,0,255), 2)
+                        for k, idxp in p.items():
+                            x, y, _ = all_peaks[k][idxp]
+                            px, py = int(x*(tw/W)), int(y*(th/H))
+                            cv2.circle(orig_img, (px,py), 3, (0,0,255), -1)
+                    vis_list.append(wandb.Image(cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB),
+                                                caption=f"Image {img_id} – GT(green) vs Pred(red)"))
 
-                    for person in persons:
-                        color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-                        # 画骨架连线
-                        for (a, b) in COCO_PERSON_SKELETON:
-                            if a in person and b in person:
-                                pa = person[a]; pb = person[b]
-                                xa = int(all_peaks[a][pa][0] * (orig_img.shape[1] / float(W)))
-                                ya = int(all_peaks[a][pa][1] * (orig_img.shape[0] / float(H)))
-                                xb = int(all_peaks[b][pb][0] * (orig_img.shape[1] / float(W)))
-                                yb = int(all_peaks[b][pb][1] * (orig_img.shape[0] / float(H)))
-                                cv2.line(orig_img, (xa, ya), (xb, yb), color, 2)
-                        # 画关键点圆点
-                        for k, peak_idx in person.items():
-                            px = int(all_peaks[k][peak_idx][0] * (orig_img.shape[1] / float(W)))
-                            py = int(all_peaks[k][peak_idx][1] * (orig_img.shape[0] / float(H)))
-                            cv2.circle(orig_img, (px, py), 3, color, -1)
-                    vis_image = cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB)
-                    vis_list.append(wandb.Image(vis_image, caption=f"Image {img_id}"))
-                    vis_count += 1
-            count += B
-    # 利用 COCO API 计算关键点检测指标
+            idx_offset += B
+
+    # 计算 COCO 指标
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, iouType='keypoints')
     coco_eval.params.imgIds = img_ids
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()
-    mean_ap = coco_eval.stats[0]      # AP (OKS 0.50:0.95)
-    ap50 = coco_eval.stats[1]         # AP@OKS=0.50
+    mean_ap = coco_eval.stats[0]
+    ap50 = coco_eval.stats[1]
     return mean_ap, ap50, vis_list
 
 # -----------------------
@@ -559,6 +560,9 @@ if __name__ == '__main__':
         hm_size=(args.hm_h, args.hm_w),
         sigma=args.sigma
     )
+    print(f"Train Sample: {len(train_ds)}")
+    print(f"Val Sample: {len(val_ds)}")
+
     train_loader = DataLoader(
         train_ds,
         batch_size=config.batch_size,
