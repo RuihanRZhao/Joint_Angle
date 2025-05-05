@@ -353,6 +353,8 @@ if __name__ == '__main__':
     print(f"Val samples:{len(val_ds)}")
     print(f"-------------------------------")
 
+    wandb.init(project='Multi_Pose_test', entity="joint_angle",config=vars(args))
+
     best_ap = 0.0
     for epoch in range(1, args.epochs + 1):
         start = time.time()
