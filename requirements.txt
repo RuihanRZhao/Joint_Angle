@@ -25,3 +25,5 @@ timm>=0.6.12
 
 # (Optional) for progress bars, logging, etc.
 tqdm>=4.62.0
+
+scipy
