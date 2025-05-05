@@ -284,71 +284,26 @@ def train_one_epoch(model, loader, criterion, optimizer, device, teacher=None, d
 # -----------------------
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="轻量化多人姿态估计训练脚本")
-    parser.add_argument('--data_root', type=str, default='data/coco', help='COCO 数据集根目录')
-    parser.add_argument('--batch_size', type=int, default=32, help='训练批大小')
-    parser.add_argument('--lr', type=float, default=1e-3, help='初始学习率')
-    parser.add_argument('--epochs', type=int, default=50, help='训练轮数')
-    parser.add_argument('--img_h', type=int, default=256, help='输入图像高度')
-    parser.add_argument('--img_w', type=int, default=192, help='输入图像宽度')
-    parser.add_argument('--hm_h', type=int, default=64, help='输出热图高度')
-    parser.add_argument('--hm_w', type=int, default=48, help='输出热图宽度')
-    parser.add_argument('--sigma', type=int, default=2, help='高斯热图 sigma')
-    parser.add_argument('--ohkm_k', type=int, default=8, help='OHKM 困难关键点 topK')
-    parser.add_argument('--num_workers', type=int, default=8, help='DataLoader 线程数')
-    parser.add_argument(
-        '--teacher_path',
-        type=str,
-        default='https://download.openmmlab.com/mmpose/top_down/hrnet/hrnet_w48_coco_384x288-5435ae5f_20200708.pth',
-        help='教师模型路径或 URL；如果是 URL，则自动下载到 run/models 目录'
-    )
+    parser.add_argument('--data_root',   type=str,   default='data/coco', help='COCO 数据集根目录')
+    parser.add_argument('--batch_size',  type=int,   default=32,         help='训练批大小')
+    parser.add_argument('--lr',          type=float, default=1e-3,       help='初始学习率')
+    parser.add_argument('--epochs',      type=int,   default=50,         help='训练轮数')
+    parser.add_argument('--img_h',       type=int,   default=256,        help='输入图像高度')
+    parser.add_argument('--img_w',       type=int,   default=192,        help='输入图像宽度')
+    parser.add_argument('--hm_h',        type=int,   default=64,         help='输出热图高度')
+    parser.add_argument('--hm_w',        type=int,   default=48,         help='输出热图宽度')
+    parser.add_argument('--sigma',       type=int,   default=2,          help='高斯热图 sigma')
+    parser.add_argument('--ohkm_k',      type=int,   default=8,          help='OHKM 困难关键点 topK')
+    parser.add_argument('--num_workers', type=int,   default=8,          help='DataLoader 线程数')
     args = parser.parse_args()
-
-    import requests
-    from tqdm import tqdm
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # ——— 教师模型下载/加载 ———
-    teacher = None
-    if args.teacher_path:
-        save_dir = 'run/models'
-        os.makedirs(save_dir, exist_ok=True)
+    # 创建模型保存目录
+    save_dir = 'run/models'
+    os.makedirs(save_dir, exist_ok=True)
 
-        # 确定本地文件名和路径
-        teacher_fname = os.path.basename(args.teacher_path)
-        local_teacher = os.path.join(save_dir, teacher_fname)
-
-        # 如果是 URL，则下载
-        if args.teacher_path.startswith('http'):
-            if not os.path.isfile(local_teacher):
-                resp = requests.get(args.teacher_path, stream=True)
-                total = int(resp.headers.get('content-length', 0))
-                with open(local_teacher, 'wb') as f, tqdm(
-                        desc=f"Downloading teacher model",
-                        total=total, unit='B', unit_scale=True, unit_divisor=1024
-                ) as bar:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            bar.update(len(chunk))
-        else:
-            # 如果用户给的是本地路径，则检查存在性
-            if not os.path.isfile(args.teacher_path):
-                raise FileNotFoundError(f"教师模型文件不存在: {args.teacher_path}")
-            local_teacher = args.teacher_path
-
-        # 加载教师模型
-        teacher = MultiPoseNet(num_keypoints=NUM_KP, width_mult=1.0, refine=False).to(device)
-        teacher_ckpt = torch.load(
-            local_teacher,
-            map_location=device,
-            weights_only=False  # PyTorch 2.6+ 参数，允许加载包含元数据的完整 checkpoint
-        )
-        teacher.load_state_dict(teacher_ckpt)
-        teacher.eval()
-    # ————————————————————
-
-    # 准备学生模型、损失、优化器、调度器
+    # 初始化学生模型、损失、优化器、调度器
     model = MultiPoseNet(num_keypoints=NUM_KP, width_mult=1.0, refine=True).to(device)
     criterion = PoseLoss(ohkm_k=args.ohkm_k)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -391,13 +346,13 @@ if __name__ == '__main__':
     best_ap = 0.0
     for epoch in range(1, args.epochs + 1):
         start = time.time()
+        # 训练
         train_loss = train_one_epoch(
-            model, train_loader, criterion, optimizer, device,
-            teacher=teacher,
-            distill_weight=getattr(args, 'distill_weight', 1.0)
+            model, train_loader, criterion, optimizer, device
         )
         scheduler.step()
 
+        # 验证
         mean_ap, ap50, vis_images = evaluate(model, val_loader, device)
 
         elapsed = time.time() - start
