@@ -5,6 +5,12 @@ from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
 
 from utils.Evaluator import PoseEvaluator
 
+SKELETON = [
+    (15,13),(13,11),(16,14),(14,12),(11,12),
+    (5,11),(6,12),(5,6),(5,7),(7,9),
+    (6,8),(8,10),(1,2),(0,1),(0,2),
+    (1,3),(2,4),(3,5),(4,6)
+]
 
 class CoordinateAttention(nn.Module):
     """坐标注意力机制，替代原SE模块"""

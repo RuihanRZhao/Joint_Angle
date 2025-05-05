@@ -123,7 +123,7 @@ def train(args):
 
             optimizer.zero_grad()
             if args.use_fp16:
-                with autocast():
+                with autocast(device_type="cuda"):
                     seg_pred, pose_pred = model(imgs)  # 训练时返回 (seg_logits, pose_heatmaps)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 scaler.scale(loss).backward()
