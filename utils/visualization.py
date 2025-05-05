@@ -123,7 +123,9 @@ if __name__ == '__main__':
     # 调用可视化函数
     vis_img = visualize_coco_keypoints(
         img, anns, COCO_PERSON_SKELETON,
-        output_size=(args.width, args.height)
+        (args.width, args.height),
+        (255,0,0),
+        (255,0,0)
     )
 
     # 显示并保存结果
