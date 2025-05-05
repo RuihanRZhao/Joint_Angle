@@ -82,12 +82,12 @@ if __name__ == '__main__':
         description="测试 COCO GT 关键点可视化"
     )
     parser.add_argument(
-        '--img_path', type=str, default= 'run/data/val2017/000000000001.jpg',
-        help='原始图像路径，例如 run/data/val2017/000000000001.jpg'
+        '--img_path', type=str, default= '../run/data/val2017/000000000001.jpg',
+        help='原始图像路径'
     )
     parser.add_argument(
-        '--ann_file', type=str, default= 'run/data/annotations/person_keypoints_val2017.json',
-        help='COCO 注释文件路径，例如 run/data/annotations/person_keypoints_val2017.json'
+        '--ann_file', type=str, default= '../run/data/annotations/person_keypoints_val2017.json',
+        help='COCO 注释文件路径'
     )
     parser.add_argument(
         '--img_id', type=int, default= 1,
