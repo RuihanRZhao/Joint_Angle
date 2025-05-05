@@ -396,6 +396,7 @@ if __name__ == '__main__':
     print(f"-------------------------------")
 
     wandb.init(project='Multi_Pose_test', entity="joint_angle",config=vars(args))
+    wandb.watch(model, log="all", log_freq=100)
 
     best_ap = 0.0
     for epoch in range(1, args.epochs + 1):
@@ -405,22 +406,20 @@ if __name__ == '__main__':
             model, train_loader, criterion, optimizer, device
         )
         scheduler.step()
-        wandb.log({
-            "train/epoch_loss": train_loss,
-            "train/lr": scheduler.get_last_lr()[0],
-            "epoch": epoch
-        })
 
         # 验证
         mean_ap, ap50, vis_images = evaluate(model, val_loader, device)
 
-        wandb.log({
-                "val/mAP": mean_ap,
-                "val/AP50": ap50,
-                "val/examples": vis_images
-        })
-
         elapsed = time.time() - start
+        wandb.log({
+            "train/epoch_loss": train_loss,
+            "train/lr": scheduler.get_last_lr()[0],
+            "val/mAP": mean_ap,
+            "val/AP50": ap50,
+            "val/examples": vis_images,
+            "epoch/time":elapsed
+        }, step=epoch)
+
         print(f"[Epoch {epoch}/{args.epochs}] "
               f"Train Loss: {train_loss:.4f}  "
               f"mAP: {mean_ap:.4f}  AP50: {ap50:.4f}  "
