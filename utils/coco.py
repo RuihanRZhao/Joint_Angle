@@ -7,6 +7,7 @@ from pycocotools.coco import COCO
 from PIL import Image
 import torchvision.transforms as T
 import cv2
+import zipfile
 from torch.utils.data import Dataset
 from typing import Tuple, List
 from tqdm import tqdm
