@@ -322,7 +322,7 @@ class EarlyStopping:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="轻量化多人姿态估计训练脚本")
     parser.add_argument('--data_root',   type=str,   default='run/data', help='COCO 数据集根目录')
-    parser.add_argument('--batch_size',  type=int,   default=1024,         help='训练批大小')
+    parser.add_argument('--batch_size',  type=int,   default=512,         help='训练批大小')
     parser.add_argument('--lr',          type=float, default=1e-3,       help='初始学习率')
     parser.add_argument('--epochs',      type=int,   default=1000,         help='训练轮数')
     parser.add_argument('--img_h',       type=int,   default=256,        help='输入图像高度')
@@ -331,7 +331,7 @@ if __name__ == '__main__':
     parser.add_argument('--hm_w',        type=int,   default=48,         help='输出热图宽度')
     parser.add_argument('--sigma',       type=int,   default=2,          help='高斯热图 sigma')
     parser.add_argument('--ohkm_k',      type=int,   default=8,          help='OHKM 困难关键点 topK')
-    parser.add_argument('--num_workers', type=int,   default=28,          help='DataLoader 线程数')
+    parser.add_argument('--num_workers', type=int,   default=16,          help='DataLoader 线程数')
     parser.add_argument('--patience',    type=int,   default=20,          help='')
     parser.add_argument('--min_delta',   type=float, default=0.000,          help='')
 
