@@ -98,13 +98,50 @@ class PoseLoss(nn.Module):
             v.topk(self.ohkm_k, largest=True)[0].mean() for v in per_channel
         ]).mean()
         return loss_all + topk_loss
+# --------------------------------------------------
+# Utility: Ensure COCO dataset integrity and download
+# --------------------------------------------------
+def ensure_coco_data(root):
+    """
+    检查 COCO 数据集是否完整；如缺失自动下载并解压。
+    """
+    urls = {
+        'train2017.zip': 'http://images.cocodataset.org/zips/train2017.zip',
+        'val2017.zip':   'http://images.cocodataset.org/zips/val2017.zip',
+        'annotations.zip': 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
+    }
+    os.makedirs(root, exist_ok=True)
+    # 下载并解压函数
+    def _download_and_extract(filename, url):
+        zip_path = os.path.join(root, filename)
+        if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 100:
+            print(f"Downloading {filename}...")
+            os.system(f"wget -O {zip_path} {url}")
+        # 解压
+        print(f"Extracting {filename}...")
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(root)
+
+    # 检查文件夹
+    expected_dirs = ['train2017', 'val2017', 'annotations']
+    present = {d: os.path.isdir(os.path.join(root, d)) for d in expected_dirs}
+    for zip_name, url in urls.items():
+        dir_name = zip_name.replace('.zip', '')
+        if not present.get(dir_name, False):
+            _download_and_extract(zip_name, url)
 
 # -----------------------
 # COCO Dataset
 # -----------------------
 class COCOPoseDataset(torch.utils.data.Dataset):
+    """
+    COCO Pose Dataset: 自动检查 & 下载数据集
+    返回裁剪图像及对应关键点热图
+    """
     def __init__(self, root, ann_file, img_folder,
                  img_size=(256,192), hm_size=(64,48), sigma=2):
+        # 确保数据完整
+        ensure_coco_data(root)
         self.coco = COCO(ann_file)
         img_ids = self.coco.getImgIds(catIds=[1])
         self.samples = []
@@ -134,7 +171,6 @@ class COCOPoseDataset(torch.utils.data.Dataset):
         path = os.path.join(self.root, self.img_folder, img_info['file_name'])
         img = Image.open(path).convert('RGB')
         x,y,w,h = ann['bbox']
-        # Expand bbox by 1.2
         c_x, c_y = x + w/2, y + h/2
         w *= 1.2; h *= 1.2
         x1 = max(0, int(c_x - w/2)); y1 = max(0, int(c_y - h/2))
@@ -144,9 +180,8 @@ class COCOPoseDataset(torch.utils.data.Dataset):
         hm = np.zeros((len(keypoints), *self.hm_size), dtype=np.float32)
         for i, (px,py,v) in enumerate(keypoints):
             if v>0:
-                hm_x = px-x1; hm_y = py-y1
-                hm_x *= self.hm_size[1]/self.img_size[1]
-                hm_y *= self.hm_size[0]/self.img_size[0]
+                hm_x = (px - x1) * (self.hm_size[1]/self.img_size[1])
+                hm_y = (py - y1) * (self.hm_size[0]/self.img_size[0])
                 ul = [int(hm_x-3*self.sigma), int(hm_y-3*self.sigma)]
                 br = [int(hm_x+3*self.sigma), int(hm_y+3*self.sigma)]
                 for yy in range(max(0,ul[1]), min(self.hm_size[0], br[1]+1)):
