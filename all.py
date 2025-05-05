@@ -328,6 +328,8 @@ if __name__ == '__main__':
         sigma=args.sigma,
         augment=False
     )
+    print()
+
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
@@ -342,6 +344,14 @@ if __name__ == '__main__':
         num_workers=args.num_workers,
         pin_memory=True
     )
+
+    print(f"-----------CONFIG--------------")
+    for name, value in vars(args).items():
+        print(f"  {name:15s} = {value}")
+
+    print(f"Train samples:{len(train_ds)}")
+    print(f"Val samples:{len(val_ds)}")
+    print(f"-------------------------------")
 
     best_ap = 0.0
     for epoch in range(1, args.epochs + 1):
