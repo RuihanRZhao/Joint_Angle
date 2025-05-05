@@ -124,12 +124,6 @@ def train(args):
                 if p.grad is not None:
                     total_norm_sqr += p.grad.norm(2) ** 2
             grad_norm = torch.sqrt(total_norm_sqr).item()
-            # Log batch
-            wandb.log({
-                'train/loss':      loss.item(),
-                'train/lr':        optimizer.param_groups[0]['lr'],
-                'train/grad_norm': grad_norm
-            }, step=(epoch-1)*len(train_loader)+batch_idx)
             pbar.update(1)
         pbar.close()
         avg_train_loss = train_loss / len(train_loader)
@@ -238,5 +232,10 @@ def train(args):
 
 if __name__ == '__main__':
     args = arg_real()
+
+    for k, v in vars(args).items():
+        print(f"  {k}: {v}")
+    print("--------------------------------------")
     os.makedirs(args.output_dir, exist_ok=True)
+
     train(args)
