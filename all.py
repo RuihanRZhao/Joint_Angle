@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import requests
 from torch.utils.data import DataLoader
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -103,32 +104,48 @@ class PoseLoss(nn.Module):
 # --------------------------------------------------
 def ensure_coco_data(root):
     """
-    检查 COCO 数据集是否完整；如缺失自动下载并解压。
+    检查 COCO 数据集是否完整；如缺失则自动下载并解压，下载时显示 tqdm 进度条。
     """
     urls = {
-        'train2017.zip': 'http://images.cocodataset.org/zips/train2017.zip',
-        'val2017.zip':   'http://images.cocodataset.org/zips/val2017.zip',
-        'annotations.zip': 'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
+        'train2017.zip':      'http://images.cocodataset.org/zips/train2017.zip',
+        'val2017.zip':        'http://images.cocodataset.org/zips/val2017.zip',
+        'annotations.zip':    'http://images.cocodataset.org/annotations/annotations_trainval2017.zip'
     }
     os.makedirs(root, exist_ok=True)
-    # 下载并解压函数
-    def _download_and_extract(filename, url):
+
+    def _download_with_progress(filename, url):
         zip_path = os.path.join(root, filename)
+        # 如果文件不存在或太小则重新下载
         if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 100:
-            print(f"Downloading {filename}...")
-            os.system(f"wget -O {zip_path} {url}")
-        # 解压
-        print(f"Extracting {filename}...")
+            # Streaming download with progress bar
+            with requests.get(url, stream=True) as r:
+                r.raise_for_status()
+                total = int(r.headers.get('content-length', 0))
+                with open(zip_path, 'wb') as f, tqdm(
+                    desc=f"Downloading {filename}",
+                    total=total,
+                    unit='B',
+                    unit_scale=True,
+                    unit_divisor=1024,
+                ) as bar:
+                    for chunk in r.iter_content(chunk_size=1024):
+                        if chunk:
+                            f.write(chunk)
+                            bar.update(len(chunk))
+        return zip_path
+
+    def _extract_zip(zip_path):
+        print(f"Extracting {os.path.basename(zip_path)}...")
         with zipfile.ZipFile(zip_path, 'r') as zf:
             zf.extractall(root)
 
-    # 检查文件夹
+    # 检查并下载解压
     expected_dirs = ['train2017', 'val2017', 'annotations']
-    present = {d: os.path.isdir(os.path.join(root, d)) for d in expected_dirs}
     for zip_name, url in urls.items():
-        dir_name = zip_name.replace('.zip', '')
-        if not present.get(dir_name, False):
-            _download_and_extract(zip_name, url)
+        target_dir = zip_name.replace('.zip', '')
+        if not os.path.isdir(os.path.join(root, target_dir)):
+            zip_path = _download_with_progress(zip_name, url)
+            _extract_zip(zip_path)
 
 # -----------------------
 # COCO Dataset
