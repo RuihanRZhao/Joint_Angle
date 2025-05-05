@@ -14,7 +14,7 @@ COCO_PERSON_SKELETON: List[Tuple[int, int]] = [
 ]
 
 
-def visualize_coco_gt_keypoints(
+def visualize_coco_keypoints(
     img: np.ndarray,
     anns: List[Dict],
     skeleton: List[Tuple[int, int]],
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     ))
 
     # 调用可视化函数
-    vis_img = visualize_coco_gt_keypoints(
+    vis_img = visualize_coco_keypoints(
         img, anns, COCO_PERSON_SKELETON,
         output_size=(args.width, args.height)
     )
