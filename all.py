@@ -497,15 +497,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         total_norm = total_norm ** 0.5
         optimizer.step()
         epoch_loss += loss.item() * imgs.size(0)
-        # 每100个 batch 记录一次训练损失
-        if batch_idx % 100 == 0:
-            current_lr = optimizer.param_groups[0]['lr']
-            wandb.log({
-                "batch/train_loss": loss.item(),
-                "batch/grad_norm": total_norm,
-                "batch/lr": current_lr,
-                "batch_idx": batch_idx
-            })
+
     return epoch_loss / len(loader.dataset)
 
 # -----------------------
@@ -603,9 +595,8 @@ if __name__ == '__main__':
         # Log parameter & gradient histograms
         for name, param in model.named_parameters():
             wandb.log({f"param/{name}": wandb.Histogram(param.detach().cpu().numpy()),
-                       f"grad/{name}": wandb.Histogram(param.grad.detach().cpu().numpy() if param.grad is not None else np.zeros(1))},
-                      commit=False)
-        wandb.log({}, commit=True)
+                       f"grad/{name}": wandb.Histogram(param.grad.detach().cpu().numpy() if param.grad is not None else np.zeros(1))},commit=False)
+        wandb.log({},  commit=True)
         # Save checkpoint and upload as WandB Artifact
         ckpt_path = f'run/models/epoch{epoch}.pth'
         torch.save(model.state_dict(), ckpt_path)
