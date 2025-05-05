@@ -177,7 +177,7 @@ def evaluate(model, val_loader, device):
                     orig_img = cv2.imread(img_path)
                     if orig_img is None:
                         orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
-                    tw, th = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
+                    th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
 
                     # 先画 GT
                     gt_anns = coco_gt.loadAnns(
