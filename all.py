@@ -284,6 +284,39 @@ def train_one_epoch(model, loader, criterion, optimizer, device, teacher=None, d
     return epoch_loss / len(loader.dataset)
 
 # -----------------------
+# Early Stopp
+# -----------------------
+class EarlyStopping:
+    """
+    Early stops training if validation loss doesn't improve after a given patience.
+    """
+    def __init__(self, patience=5, min_delta=0.0):
+        """
+        Args:
+            patience (int): How many epochs to wait after last time validation loss improved.
+            min_delta (float): Minimum change in the monitored loss to qualify as an improvement.
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_ap = None
+        self.early_stop = False
+
+    def __call__(self, now_ap):
+        if self.best_ap is None:
+            self.best_ap = now_ap
+            return False
+        if now_ap > self.best_ap + self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+            else: pass
+        else:
+            self.best_ap = now_ap
+            self.counter = 0
+
+
+# -----------------------
 # Main
 # -----------------------
 if __name__ == '__main__':
@@ -291,7 +324,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_root',   type=str,   default='run/data', help='COCO 数据集根目录')
     parser.add_argument('--batch_size',  type=int,   default=64,         help='训练批大小')
     parser.add_argument('--lr',          type=float, default=1e-3,       help='初始学习率')
-    parser.add_argument('--epochs',      type=int,   default=50,         help='训练轮数')
+    parser.add_argument('--epochs',      type=int,   default=1000,         help='训练轮数')
     parser.add_argument('--img_h',       type=int,   default=256,        help='输入图像高度')
     parser.add_argument('--img_w',       type=int,   default=192,        help='输入图像宽度')
     parser.add_argument('--hm_h',        type=int,   default=64,         help='输出热图高度')
@@ -299,6 +332,9 @@ if __name__ == '__main__':
     parser.add_argument('--sigma',       type=int,   default=2,          help='高斯热图 sigma')
     parser.add_argument('--ohkm_k',      type=int,   default=8,          help='OHKM 困难关键点 topK')
     parser.add_argument('--num_workers', type=int,   default=16,          help='DataLoader 线程数')
+    parser.add_argument('--patience',    type=int,   default=20,          help='DataLoader 线程数')
+    parser.add_argument('--min_delta',   type=float, default=0.000,          help='DataLoader 线程数')
+
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -349,6 +385,8 @@ if __name__ == '__main__':
         pin_memory=True
     )
 
+    early_stopper = EarlyStopping(patience=10, min_delta=0.0001)
+
     print(f"-----------CONFIG--------------")
     for name, value in vars(args).items():
         print(f"  {name:15s} = {value}")
@@ -393,3 +431,6 @@ if __name__ == '__main__':
             best_ap = mean_ap
             torch.save(model.state_dict(), os.path.join(save_dir, 'best_model.pth'))
 
+        if early_stopper(mean_ap):
+            print(f"Early stopping at epoch {epoch}")
+            break
