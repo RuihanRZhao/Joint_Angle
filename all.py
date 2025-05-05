@@ -20,13 +20,6 @@ from utils.visualization import visualize_coco_keypoints
 from utils.loss import PoseLoss
 from utils.coco import COCOPoseDataset, COCO_PERSON_SKELETON
 
-
-
-# --------------------------------------------------
-# Utility: Ensure COCO dataset integrity and download
-# --------------------------------------------------
-
-
 # -----------------------
 # Evaluation and Visualization
 # -----------------------

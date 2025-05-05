@@ -1,7 +1,19 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
+from typing import Tuple, List
 
+COCO_PERSON_SKELETON: List[Tuple[int, int]] = [
+    (15, 13), (13, 11), (16, 14), (14, 12),
+    (5, 11), (6, 12), (5, 7), (6, 8),
+    (7, 9), (8, 10), (1, 2), (0, 1),
+    (0, 2), (1, 3), (2, 4), (3, 5), (4, 6)
+]
+
+
+NUM_KP = 17
+NUM_LIMBS = len(COCO_PERSON_SKELETON)
 
 class InvertedResidual(nn.Module):
     """MobileNetV2的倒残差模块 (薄->厚->薄, 深度可分离卷积)"""
