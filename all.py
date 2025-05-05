@@ -407,7 +407,7 @@ def main():
         wandb.log({}, commit=True)
 
         # Save checkpoint and upload as WandB Artifact
-        ckpt_path = f'checkpoints/epoch{epoch}.pth'
+        ckpt_path = f'run/models/epoch{epoch}.pth'
         torch.save(model.state_dict(), ckpt_path)
         artifact = wandb.Artifact(f'lite-pose-model-epoch{epoch}', type='model')
         artifact.add_file(ckpt_path)
