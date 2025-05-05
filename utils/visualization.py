@@ -18,7 +18,9 @@ def visualize_coco_keypoints(
     img: np.ndarray,
     anns: List[Dict],
     skeleton: List[Tuple[int, int]],
-    output_size: Tuple[int, int]
+    output_size: Tuple[int, int],
+    point_color: Tuple[int, int, int],
+    line_color: Tuple[int, int, int],
 ) -> np.ndarray:
     """
     在原始图片上绘制 COCO 格式的 Ground Truth 关键点骨架。
@@ -63,12 +65,12 @@ def visualize_coco_keypoints(
         # 绘制骨架连线 (绿色)
         for a, b in skeleton:
             if pts[a] is not None and pts[b] is not None:
-                cv2.line(vis_img, pts[a], pts[b], (0, 255, 0), thickness=2)
+                cv2.line(vis_img, pts[a], pts[b], line_color, thickness=2)
 
         # 绘制关键点 (绿色实心圆)
         for pt in pts:
             if pt is not None:
-                cv2.circle(vis_img, pt, radius=3, color=(0, 255, 0), thickness=-1)
+                cv2.circle(vis_img, pt, radius=3, color=point_color, thickness=-1)
 
     return vis_img
 
