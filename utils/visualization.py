@@ -6,7 +6,12 @@ from pycocotools.coco import COCO
 
 
 # COCO skeleton definition: list of (start_kp, end_kp) index pairs
-# e.g. COCO_PERSON_SKELETON = [(15,13), (13,11), ...]
+COCO_PERSON_SKELETON: List[Tuple[int, int]] = [
+    (15, 13), (13, 11), (16, 14), (14, 12),
+    (5, 11), (6, 12), (5, 7), (6, 8),
+    (7, 9), (8, 10), (1, 2), (0, 1),
+    (0, 2), (1, 3), (2, 4), (3, 5), (4, 6)
+]
 
 
 def visualize_coco_gt_keypoints(
