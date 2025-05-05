@@ -13,7 +13,7 @@ import wandb
 
 from utils.coco import prepare_coco_dataset, COCODataset, collate_fn
 from utils.visualization import SKELETON, COCO_KEYPOINT_NAMES
-from models.SegKP_Model import SegmentKeypointModel, PosePostProcessor
+from models.Multi_Pose import SegmentKeypointModel, PosePostProcessor
 from utils.loss import criterion
 from utils.Evaluator import SegmentationEvaluator, PoseEvaluator
 from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
