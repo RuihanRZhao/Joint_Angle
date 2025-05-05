@@ -87,29 +87,38 @@ class PoseEstimationLoss(nn.Module):
 
 
 class Criterion(nn.Module):
-    """总损失函数: 支持分割 + 姿态(热图+PAF)"""
-
     def __init__(self):
         super().__init__()
-        self.seg_loss = SegmentationLoss()
-        self.hm_loss = PoseEstimationLoss()        # 热图部分
-        self.paf_loss = PoseEstimationLoss(beta=0.5)  # PAF 部分
-        # AdaptiveMultiTaskLoss 接收 [L_seg, L_pose]
+        self.seg_loss   = SegmentationLoss()
+        self.hm_loss    = PoseEstimationLoss()           # 热图部分
+        self.paf_loss   = PoseEstimationLoss(beta=0.5)   # PAF 部分
         self.adaptive_loss = AdaptiveMultiTaskLoss(num_tasks=2)
 
-    def forward(self, seg_pred, seg_gt, pose_pred, hm_gt, paf_gt):
-        # 拆分 pose_pred: 前17通道为热图，后34为PAF
-        hm_pred = pose_pred[:, :17]
-        paf_pred = pose_pred[:, 17:]
-
+    def forward(self, seg_pred, seg_gt, pose_pred, hm_gt, paf_gt=None):
+        # 1) 分割损失
         l_seg = self.seg_loss(seg_pred, seg_gt)
-        l_hm  = self.hm_loss(hm_pred, hm_gt)
-        l_paf = self.paf_loss(paf_pred, paf_gt)
-        # 将热图和PAF视为一个姿态任务
+
+        # 2) 动态拆分热图和 PAF
+        num_kps  = hm_gt.size(1)      # 从 GT heatmap 读取通道数（一般 17）
+        channels = pose_pred.size(1)  # 模型输出通道数
+
+        # 切出热图部分
+        hm_pred = pose_pred[:, :num_kps]
+        l_hm    = self.hm_loss(hm_pred, hm_gt)
+
+        # 切出 PAF 部分（仅当通道足够且提供了 paf_gt）
+        if channels > num_kps and paf_gt is not None:
+            paf_pred = pose_pred[:, num_kps:]
+            l_paf    = self.paf_loss(paf_pred, paf_gt)
+        else:
+            l_paf = 0.0
+
+        # 3) 将热图和 PAF 合并为一个姿态任务损失
         l_pose = 0.5 * l_hm + 0.5 * l_paf
 
-        # 自适应多任务加权
-        return self.adaptive_loss([l_seg, l_pose])
+        # 4) 自适应多任务加权
+        total_loss = self.adaptive_loss([l_seg, l_pose])
+        return total_loss
 
 
 # 全局 criterion 实例
