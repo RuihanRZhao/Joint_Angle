@@ -45,7 +45,7 @@ def arg_real():
     parser.add_argument('--patience', type=int, default=20)
     parser.add_argument('--use_fp16', action='store_true', default=True)
     parser.add_argument('--warmup_epochs', type=int, default=5)
-    parser.add_argument('--val_viz_num', type=int, default=4)
+    parser.add_argument('--val_viz_num', type=int, default=2)
     parser.add_argument('--num_workers', type=int, default=24)
 
     # 分布式参数
