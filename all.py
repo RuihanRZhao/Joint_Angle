@@ -397,7 +397,6 @@ if __name__ == '__main__':
     print(f"-------------------------------")
 
     wandb.init(project='Multi_Pose_test', entity="joint_angle",config=vars(args))
-    wandb.watch(model, log="all", log_freq=100)
 
     best_ap = 0.0
     for epoch in range(1, args.epochs + 1):
@@ -430,6 +429,19 @@ if __name__ == '__main__':
         if mean_ap > best_ap:
             best_ap = mean_ap
             torch.save(model.state_dict(), os.path.join(save_dir, 'best_model.pth'))
+
+        wandb.log({
+            "train/epoch_loss": train_loss,
+            "train/lr": scheduler.get_last_lr()[0],
+            "val/mAP": mean_ap,
+            "val/AP50": ap50,
+            "viz/examples": vis_images,
+            "epoch/time": elapsed,
+        }, step=epoch)
+
+        for name, param in model.named_parameters():
+            wandb.log({f"params/{name}": wandb.Histogram(param.detach().cpu().numpy())},
+                      step=epoch)
 
         if early_stopper(mean_ap):
             print(f"Early stopping at epoch {epoch}")
