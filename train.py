@@ -125,12 +125,11 @@ def train(args):
                     total_norm_sqr += p.grad.norm(2) ** 2
             grad_norm = torch.sqrt(total_norm_sqr).item()
             # Log batch
-            global_step += 1
             wandb.log({
                 'train/loss':      loss.item(),
                 'train/lr':        optimizer.param_groups[0]['lr'],
                 'train/grad_norm': grad_norm
-            }, step=global_step)
+            }, step=(epoch-1)*len(train_loader)+batch_idx)
             pbar.update(1)
         pbar.close()
         avg_train_loss = train_loss / len(train_loader)
