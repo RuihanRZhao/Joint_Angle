@@ -331,9 +331,9 @@ if __name__ == '__main__':
     parser.add_argument('--hm_w',        type=int,   default=48,         help='输出热图宽度')
     parser.add_argument('--sigma',       type=int,   default=2,          help='高斯热图 sigma')
     parser.add_argument('--ohkm_k',      type=int,   default=8,          help='OHKM 困难关键点 topK')
-    parser.add_argument('--num_workers', type=int,   default=16,          help='DataLoader 线程数')
-    parser.add_argument('--patience',    type=int,   default=20,          help='DataLoader 线程数')
-    parser.add_argument('--min_delta',   type=float, default=0.000,          help='DataLoader 线程数')
+    parser.add_argument('--num_workers', type=int,   default=28,          help='DataLoader 线程数')
+    parser.add_argument('--patience',    type=int,   default=20,          help='')
+    parser.add_argument('--min_delta',   type=float, default=0.000,          help='')
 
     args = parser.parse_args()
 
