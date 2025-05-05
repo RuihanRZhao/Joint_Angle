@@ -114,48 +114,61 @@ class MobileNetV2Backbone(nn.Module):
         return feat2, feat3, feat5, feat7
 
 class MultiPoseNet(nn.Module):
-    """多人姿态估计网络: 轻量骨干 + 多尺度特征融合 + Heatmap/PAF 输出 (+ 精细化)"""
     def __init__(self, num_keypoints=17, width_mult=1.0, refine=True):
         super().__init__()
-        self.refine = refine
-        # 骨干网络
-        self.backbone = MobileNetV2Backbone(width_mult=width_mult)
-        # 融合通道维度
+        # … 省略骨干和前面代码 …
+
+        # 融合通道数
         unify_dim = 128 if width_mult <= 1.0 else int(math.ceil(128 * width_mult / 8) * 8)
-        # 1x1卷积调整各尺度特征通道至统一维度
-        self.conv_f7 = nn.Conv2d(int(math.ceil(320 * width_mult / 8) * 8), unify_dim, 1, bias=False)
+
+        # 1/32 尺度特征 → unify_dim
+        self.conv_f7 = nn.Conv2d(
+            int(math.ceil(320 * width_mult / 8) * 8),
+            unify_dim,
+            kernel_size=1,
+            bias=False
+        )
         self.bn_f7 = nn.BatchNorm2d(unify_dim)
 
+        # 1/16 尺度特征 → unify_dim
         in_ch_f5 = int(math.ceil(64 * width_mult / 8) * 8)
+        self.conv_f5 = nn.Conv2d(in_ch_f5, unify_dim, kernel_size=1, bias=False)
+        self.bn_f5   = nn.BatchNorm2d(unify_dim)
 
-        self.conv_f5 = nn.Conv2d(in_ch_f5, unify_dim, 1, bias=False)
-        self.bn_f5   = nn.BatchNorm2d(in_ch_f5)
+        # 1/8 尺度特征 → unify_dim
+        in_ch_f3 = int(math.ceil(32 * width_mult / 8) * 8)
+        self.conv_f3 = nn.Conv2d(in_ch_f3, unify_dim, kernel_size=1, bias=False)
+        self.bn_f3   = nn.BatchNorm2d(unify_dim)
 
+        # 1/4 尺度特征 → unify_dim
+        in_ch_f2 = int(math.ceil(24 * width_mult / 8) * 8)
+        self.conv_f2 = nn.Conv2d(in_ch_f2, unify_dim, kernel_size=1, bias=False)
+        self.bn_f2   = nn.BatchNorm2d(unify_dim)
 
-        self.conv_f3 = nn.Conv2d(int(math.ceil(32 * width_mult / 8) * 8), unify_dim, 1, bias=False)
-        self.bn_f3 = nn.BatchNorm2d(unify_dim)
-        self.conv_f2 = nn.Conv2d(int(math.ceil(24 * width_mult / 8) * 8), unify_dim, 1, bias=False)
-        self.bn_f2 = nn.BatchNorm2d(unify_dim)
-        # 融合特征平滑卷积 (3x3)
-        self.smooth1 = nn.Conv2d(unify_dim, unify_dim, 3, padding=1, bias=False)
-        self.bn_s1 = nn.BatchNorm2d(unify_dim)
-        self.smooth2 = nn.Conv2d(unify_dim, unify_dim, 3, padding=1, bias=False)
-        self.bn_s2 = nn.BatchNorm2d(unify_dim)
-        self.smooth3 = nn.Conv2d(unify_dim, unify_dim, 3, padding=1, bias=False)
-        self.bn_s3 = nn.BatchNorm2d(unify_dim)
-        # 热图和PAF输出卷积
+        # 融合后平滑卷积
+        self.smooth1 = nn.Conv2d(unify_dim, unify_dim, kernel_size=3, padding=1, bias=False)
+        self.bn_s1   = nn.BatchNorm2d(unify_dim)
+        self.smooth2 = nn.Conv2d(unify_dim, unify_dim, kernel_size=3, padding=1, bias=False)
+        self.bn_s2   = nn.BatchNorm2d(unify_dim)
+        self.smooth3 = nn.Conv2d(unify_dim, unify_dim, kernel_size=3, padding=1, bias=False)
+        self.bn_s3   = nn.BatchNorm2d(unify_dim)
+
+        # Heatmap & PAF 输出
         self.heatmap_head = nn.Conv2d(unify_dim, num_keypoints, 1)
-        self.paf_head = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
-        # 精细化模块 (Refinement)
-        if self.refine:
-            refine_in_ch = unify_dim + num_keypoints + 2 * NUM_LIMBS
-            self.refine_conv1 = nn.Conv2d(refine_in_ch, unify_dim, 3, padding=1, bias=False)
-            self.bn_ref1 = nn.BatchNorm2d(unify_dim)
+        self.paf_head     = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
+
+        # Refinement 模块（如启用）
+        if refine:
+            refine_in = unify_dim + num_keypoints + 2 * NUM_LIMBS
+            self.refine_conv1 = nn.Conv2d(refine_in, unify_dim, 3, padding=1, bias=False)
+            self.bn_ref1      = nn.BatchNorm2d(unify_dim)
             self.refine_conv2 = nn.Conv2d(unify_dim, unify_dim, 3, padding=1, bias=False)
-            self.bn_ref2 = nn.BatchNorm2d(unify_dim)
+            self.bn_ref2      = nn.BatchNorm2d(unify_dim)
             self.refine_heatmap = nn.Conv2d(unify_dim, num_keypoints, 1)
-            self.refine_paf = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
+            self.refine_paf     = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
             self.relu = nn.ReLU(inplace=True)
+
+
     def forward(self, x):
         # 1. 骨干特征提取 (多尺度)
         feat2, feat3, feat5, feat7 = self.backbone(x)
