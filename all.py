@@ -339,8 +339,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    import torch.backends.cudnn as cudnn
-    cudnn.benchmark = True
+
     # 创建模型保存目录
     save_dir = 'run/models'
     os.makedirs(save_dir, exist_ok=True)
