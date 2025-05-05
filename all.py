@@ -14,6 +14,7 @@ from PIL import Image
 import torchvision.transforms as T
 import wandb
 import cv2
+from tqdm import tqdm
 
 # -----------------------
 # Model Definitions
@@ -229,7 +230,7 @@ def evaluate(model, val_loader, device):
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
     epoch_loss = 0.0
-    for batch_idx, (imgs, targets) in enumerate(loader):
+    for batch_idx, (imgs, targets) in enumerate(tqdm(loader, desc="Training:", leave=False)):
         imgs = imgs.to(device)
         targets = targets.to(device)
 
@@ -266,7 +267,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
 # -----------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_root', type=str, default='./coco')
+    parser.add_argument('--data_root', type=str, default='run/data')
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--epochs', type=int, default=50)
@@ -279,11 +280,11 @@ def main():
     parser.add_argument('--n_vis', type=int, default=3)
     args = parser.parse_args()
 
-    os.makedirs('checkpoints', exist_ok=True)
+    os.makedirs('run/models', exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Initialize WandB
-    wandb.init(project='lite-multi-pose', config=vars(args))
+    wandb.init(project='final', config=vars(args))
     config = wandb.config
 
     # Model, loss, optimizer, scheduler
