@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 import wandb
 
@@ -85,12 +85,12 @@ def train(args):
         optimizer, first_cycle_steps=args.epochs*len(train_loader),
         cycle_mult=1.0, max_lr=args.lr, min_lr=1e-6,
         warmup_steps=args.warmup_epochs*len(train_loader), gamma=1.0)
-    scaler     = GradScaler(enabled=args.use_fp16)
+    scaler     = GradScaler(device="cuda", enabled=args.use_fp16)
     early_stop = EarlyStopping(patience=args.patience, delta=args.min_delta)
     post_proc  = PosePostProcessor()
 
     # WandB init
-    wandb.init(project=args.project, config=vars(args), entity=args.entity)
+    wandb.init(project=args.project_name, config=vars(args), entity=args.entity)
     best_ap = -1.0
     global_step = 0
 
