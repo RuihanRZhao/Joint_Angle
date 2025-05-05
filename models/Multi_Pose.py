@@ -116,7 +116,9 @@ class MobileNetV2Backbone(nn.Module):
 class MultiPoseNet(nn.Module):
     def __init__(self, num_keypoints=17, width_mult=1.0, refine=True):
         super().__init__()
-        # … 省略骨干和前面代码 …
+        self.refine = refine
+        # 骨干网络
+        self.backbone = MobileNetV2Backbone(width_mult=width_mult)
 
         # 融合通道数
         unify_dim = 128 if width_mult <= 1.0 else int(math.ceil(128 * width_mult / 8) * 8)
