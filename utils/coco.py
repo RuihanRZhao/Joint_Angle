@@ -10,6 +10,7 @@ import cv2
 from torch.utils.data import Dataset
 from typing import Tuple, List
 from tqdm import tqdm
+import requests
 
 COCO_PERSON_SKELETON: List[Tuple[int, int]] = [
     (15, 13), (13, 11), (16, 14), (14, 12),
