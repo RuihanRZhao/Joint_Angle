@@ -282,7 +282,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, teacher=None, d
 # -----------------------
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="轻量化多人姿态估计训练脚本")
-    parser.add_argument('--data_root', type=str, default='data/coco', help='COCO数据集根目录')
+    parser.add_argument('--data_root', type=str, default='run/data', help='COCO数据集根目录')
     parser.add_argument('--batch_size', type=int, default=32, help='训练批大小')
     parser.add_argument('--lr', type=float, default=1e-3, help='初始学习率')
     parser.add_argument('--epochs', type=int, default=50, help='训练轮数')
@@ -341,7 +341,7 @@ if __name__ == '__main__':
         print(f"Epoch {epoch}/{args.epochs} - Train Loss: {train_loss:.4f}  Val mAP: {val_ap:.4f}  AP@0.5: {val_ap50:.4f}  Time: {elapsed:.1f}s")
         if val_ap > best_ap:
             best_ap = val_ap
-            torch.save(model.state_dict(), "best_model.pth")
+            torch.save(model.state_dict(), "run/models/best_model.pth")
         # 保存部分可视化结果
         for i, vis_img in enumerate(vis_images):
             vis_img.save(f"vis_epoch{epoch}_{i}.png")
