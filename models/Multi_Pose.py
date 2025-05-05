@@ -125,8 +125,13 @@ class MultiPoseNet(nn.Module):
         # 1x1卷积调整各尺度特征通道至统一维度
         self.conv_f7 = nn.Conv2d(int(math.ceil(320 * width_mult / 8) * 8), unify_dim, 1, bias=False)
         self.bn_f7 = nn.BatchNorm2d(unify_dim)
-        self.conv_f5 = nn.Conv2d(int(math.ceil(96 * width_mult / 8) * 8), unify_dim, 1, bias=False)
-        self.bn_f5 = nn.BatchNorm2d(unify_dim)
+
+        in_ch_f5 = int(math.ceil(64 * width_mult / 8) * 8)
+
+        self.conv_f5 = nn.Conv2d(in_ch_f5, unify_dim, 1, bias=False)
+        self.bn_f5   = nn.BatchNorm2d(in_ch_f5)
+
+
         self.conv_f3 = nn.Conv2d(int(math.ceil(32 * width_mult / 8) * 8), unify_dim, 1, bias=False)
         self.bn_f3 = nn.BatchNorm2d(unify_dim)
         self.conv_f2 = nn.Conv2d(int(math.ceil(24 * width_mult / 8) * 8), unify_dim, 1, bias=False)
