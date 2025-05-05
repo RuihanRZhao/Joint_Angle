@@ -20,6 +20,8 @@ from utils.visualization import visualize_coco_keypoints
 from utils.loss import PoseLoss
 from utils.coco import COCOPoseDataset, COCO_PERSON_SKELETON
 
+
+NUM_KP=17
 # -----------------------
 # Evaluation and Visualization
 # -----------------------
@@ -282,7 +284,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, teacher=None, d
 # -----------------------
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="轻量化多人姿态估计训练脚本")
-    parser.add_argument('--data_root', type=str, default='run/data', help='COCO数据集根目录')
+    parser.add_argument('--data_root', type=str, default='data/coco', help='COCO 数据集根目录')
     parser.add_argument('--batch_size', type=int, default=32, help='训练批大小')
     parser.add_argument('--lr', type=float, default=1e-3, help='初始学习率')
     parser.add_argument('--epochs', type=int, default=50, help='训练轮数')
@@ -290,58 +292,120 @@ if __name__ == '__main__':
     parser.add_argument('--img_w', type=int, default=192, help='输入图像宽度')
     parser.add_argument('--hm_h', type=int, default=64, help='输出热图高度')
     parser.add_argument('--hm_w', type=int, default=48, help='输出热图宽度')
-    parser.add_argument('--sigma', type=int, default=2, help='高斯热图sigma')
-    parser.add_argument('--ohkm_k', type=int, default=8, help='OHKM困难关键点topK')
-    parser.add_argument('--num_workers', type=int, default=8, help='DataLoader工作线程数')
-    parser.add_argument('--teacher_path', type=str, default=None, help='教师模型权重路径')
-    parser.add_argument('--teacher_width', type=float, default=1.0, help='教师模型宽度倍率')
-    parser.add_argument('--distill_weight', type=float, default=1.0, help='蒸馏损失权重')
+    parser.add_argument('--sigma', type=int, default=2, help='高斯热图 sigma')
+    parser.add_argument('--ohkm_k', type=int, default=8, help='OHKM 困难关键点 topK')
+    parser.add_argument('--num_workers', type=int, default=8, help='DataLoader 线程数')
+    parser.add_argument(
+        '--teacher_path',
+        type=str,
+        default='https://download.openmmlab.com/mmpose/top_down/hrnet/hrnet_w48_coco_384x288-5435ae5f_20200708.pth',
+        help='教师模型路径或 URL；如果是 URL，则自动下载到 run/models 目录'
+    )
     args = parser.parse_args()
+
+    import requests
+    from tqdm import tqdm
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    NUM_KP = 17
-    # 初始化学生模型和教师模型
-    model = MultiPoseNet(num_keypoints=NUM_KP, width_mult=1.0, refine=True).to(device)
+    # ——— 教师模型下载/加载 ———
     teacher = None
     if args.teacher_path:
-        teacher = MultiPoseNet(num_keypoints=NUM_KP, width_mult=args.teacher_width, refine=False).to(device)
-        teacher.load_state_dict(torch.load(args.teacher_path, map_location=device))
+        save_dir = 'run/models'
+        os.makedirs(save_dir, exist_ok=True)
+
+        # 确定本地文件名和路径
+        teacher_fname = os.path.basename(args.teacher_path)
+        local_teacher = os.path.join(save_dir, teacher_fname)
+
+        # 如果是 URL，则下载
+        if args.teacher_path.startswith('http'):
+            if not os.path.isfile(local_teacher):
+                resp = requests.get(args.teacher_path, stream=True)
+                total = int(resp.headers.get('content-length', 0))
+                with open(local_teacher, 'wb') as f, tqdm(
+                        desc=f"Downloading teacher model",
+                        total=total, unit='B', unit_scale=True, unit_divisor=1024
+                ) as bar:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            bar.update(len(chunk))
+        else:
+            # 如果用户给的是本地路径，则检查存在性
+            if not os.path.isfile(args.teacher_path):
+                raise FileNotFoundError(f"教师模型文件不存在: {args.teacher_path}")
+            local_teacher = args.teacher_path
+
+        # 加载教师模型
+        teacher = MultiPoseNet(num_keypoints=NUM_KP, width_mult=1.0, refine=False).to(device)
+        teacher.load_state_dict(torch.load(local_teacher, map_location=device))
         teacher.eval()
+    # ————————————————————
+
+    # 准备学生模型、损失、优化器、调度器
+    model = MultiPoseNet(num_keypoints=NUM_KP, width_mult=1.0, refine=True).to(device)
     criterion = PoseLoss(ohkm_k=args.ohkm_k)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
-    # 加载数据集
-    train_ds = COCOPoseDataset(root=args.data_root,
-                               ann_file=os.path.join(args.data_root, 'annotations/person_keypoints_train2017.json'),
-                               img_folder='train2017',
-                               img_size=(args.img_h, args.img_w),
-                               hm_size=(args.hm_h, args.hm_w),
-                               sigma=args.sigma,
-                               augment=True)
-    val_ds = COCOPoseDataset(root=args.data_root,
-                             ann_file=os.path.join(args.data_root, 'annotations/person_keypoints_val2017.json'),
-                             img_folder='val2017',
-                             img_size=(args.img_h, args.img_w),
-                             hm_size=(args.hm_h, args.hm_w),
-                             sigma=args.sigma,
-                             augment=False)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                              num_workers=args.num_workers, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False,
-                            num_workers=args.num_workers, pin_memory=True)
+
+    # 数据集与 DataLoader
+    train_ds = COCOPoseDataset(
+        root=args.data_root,
+        ann_file=os.path.join(args.data_root, 'annotations/person_keypoints_train2017.json'),
+        img_folder='train2017',
+        img_size=(args.img_h, args.img_w),
+        hm_size=(args.hm_h, args.hm_w),
+        sigma=args.sigma,
+        augment=True
+    )
+    val_ds = COCOPoseDataset(
+        root=args.data_root,
+        ann_file=os.path.join(args.data_root, 'annotations/person_keypoints_val2017.json'),
+        img_folder='val2017',
+        img_size=(args.img_h, args.img_w),
+        hm_size=(args.hm_h, args.hm_w),
+        sigma=args.sigma,
+        augment=False
+    )
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
+
     best_ap = 0.0
     for epoch in range(1, args.epochs + 1):
-        start_time = time.time()
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device,
-                                     teacher=teacher, distill_weight=args.distill_weight)
+        start = time.time()
+        train_loss = train_one_epoch(
+            model, train_loader, criterion, optimizer, device,
+            teacher=teacher,
+            distill_weight=getattr(args, 'distill_weight', 1.0)
+        )
         scheduler.step()
-        val_ap, val_ap50, vis_images = evaluate(model, val_loader, device, scales=[1.0])
-        elapsed = time.time() - start_time
-        print(f"Epoch {epoch}/{args.epochs} - Train Loss: {train_loss:.4f}  Val mAP: {val_ap:.4f}  AP@0.5: {val_ap50:.4f}  Time: {elapsed:.1f}s")
-        if val_ap > best_ap:
-            best_ap = val_ap
-            torch.save(model.state_dict(), "run/models/best_model.pth")
-        # 保存部分可视化结果
-        for i, vis_img in enumerate(vis_images):
-            vis_img.save(f"vis_epoch{epoch}_{i}.png")
+
+        mean_ap, ap50, vis_images = evaluate(model, val_loader, device)
+
+        elapsed = time.time() - start
+        print(f"[Epoch {epoch}/{args.epochs}] "
+              f"Train Loss: {train_loss:.4f}  "
+              f"mAP: {mean_ap:.4f}  AP50: {ap50:.4f}  "
+              f"Time: {elapsed:.1f}s")
+
+        # 保存最佳模型
+        if mean_ap > best_ap:
+            best_ap = mean_ap
+            torch.save(model.state_dict(), os.path.join(save_dir, 'best_model.pth'))
+
+        # 保存可视化结果
+        for idx, img in enumerate(vis_images):
+            img.save(f"run/models/epoch{epoch}_vis{idx}.png")
