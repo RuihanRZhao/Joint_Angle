@@ -417,49 +417,73 @@ def evaluate(model, val_loader, device):
 
                 # 5. 可视化：仅对选中的 vis_img_ids
                 if img_id in vis_img_ids:
+                    # 读取 COCO 注释中的原始图像尺寸
                     img_info = coco_gt.loadImgs([img_id])[0]
+                    orig_w, orig_h = img_info['width'], img_info['height']
+
+                    # 加载原始图像
                     img_path = os.path.join(val_loader.dataset.root,
                                             val_loader.dataset.img_folder,
                                             img_info['file_name'])
                     orig_img = cv2.imread(img_path)
                     if orig_img is None:
-                        orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
-                    # resize to input size
-                    th, tw = val_loader.dataset.img_size
+                        # 若加载失败，创建黑色背景
+                        orig_img = np.zeros((orig_h, orig_w, 3), dtype=np.uint8)
+
+                    # 缩放到网络输入尺寸
+                    th, tw = val_loader.dataset.img_size  # th=height, tw=width
                     orig_img = cv2.resize(orig_img, (tw, th))
-                    # 先画 GT
-                    anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None))
+
+                    # 先画 GT（绿色骨架）
+                    anns = coco_gt.loadAnns(
+                        coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
+                    )
                     for ann in anns:
-                        if ann['num_keypoints'] == 0: continue
+                        if ann['num_keypoints'] == 0:
+                            continue
                         pts = []
+                        # 将 COCO 注释中的 (x,y) 坐标按 (tw/orig_w, th/orig_h) 缩放到当前图像上
                         for i in range(17):
-                            x, y, v = ann['keypoints'][3*i:3*i+3]
-                            if v>0:
-                                px = int(x * (tw/orig_img.shape[1]))
-                                py = int(y * (th/orig_img.shape[0]))
-                                pts.append((px,py))
+                            x, y, v = ann['keypoints'][3 * i:3 * i + 3]
+                            if v > 0:
+                                px = int(x * (tw / orig_w))
+                                py = int(y * (th / orig_h))
+                                pts.append((px, py))
                             else:
                                 pts.append(None)
-                        for a,b in COCO_PERSON_SKELETON:
+                        # 画骨架连线
+                        for a, b in COCO_PERSON_SKELETON:
                             if pts[a] and pts[b]:
-                                cv2.line(orig_img, pts[a], pts[b], (0,255,0), 2)
+                                cv2.line(orig_img, pts[a], pts[b], (0, 255, 0), 2)
+                        # 画关键点
                         for p in pts:
-                            if p: cv2.circle(orig_img, p, 3, (0,255,0), -1)
-                    # 再画 Pred
+                            if p:
+                                cv2.circle(orig_img, p, 3, (0, 255, 0), -1)
+
+                    # 再画 Pred（红色骨架）
                     for p in persons:
-                        for a,b in COCO_PERSON_SKELETON:
+                        # 骨架连线
+                        for a, b in COCO_PERSON_SKELETON:
                             if a in p and b in p:
                                 xa, ya, _ = all_peaks[a][p[a]]
                                 xb, yb, _ = all_peaks[b][p[b]]
-                                xa, ya = int(xa*(tw/W)), int(ya*(th/H))
-                                xb, yb = int(xb*(tw/W)), int(yb*(th/H))
-                                cv2.line(orig_img, (xa,ya), (xb,yb), (0,0,255), 2)
+                                # 按 (tw/W, th/H) 缩放到当前图像上
+                                xa, ya = int(xa * (tw / W)), int(ya * (th / H))
+                                xb, yb = int(xb * (tw / W)), int(yb * (th / H))
+                                cv2.line(orig_img, (xa, ya), (xb, yb), (0, 0, 255), 2)
+                        # 关键点
                         for k, idxp in p.items():
                             x, y, _ = all_peaks[k][idxp]
-                            px, py = int(x*(tw/W)), int(y*(th/H))
-                            cv2.circle(orig_img, (px,py), 3, (0,0,255), -1)
-                    vis_list.append(wandb.Image(cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB),
-                                                caption=f"Image {img_id} – GT(green) vs Pred(red)"))
+                            px, py = int(x * (tw / W)), int(y * (th / H))
+                            cv2.circle(orig_img, (px, py), 3, (0, 0, 255), -1)
+
+                    # 转为 RGB 并加入 WandB 可视化列表
+                    vis_list.append(
+                        wandb.Image(
+                            cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB),
+                            caption=f"Image {img_id} – GT(green) vs Pred(red)"
+                        )
+                    )
 
             idx_offset += B
 
