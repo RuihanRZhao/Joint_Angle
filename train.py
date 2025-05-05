@@ -105,13 +105,13 @@ def train(args):
             optimizer.zero_grad()
             if args.use_fp16:
                 with autocast(device_type="cuda"):
-                    seg_pred, pose_pred = model(imgs)
+                    seg_pred, pose_pred, _ = model(imgs)
                     loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                seg_pred, pose_pred = model(imgs)
+                seg_pred, pose_pred, _ = model(imgs)
                 loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 loss.backward()
                 optimizer.step()
@@ -147,7 +147,7 @@ def train(args):
         with torch.no_grad():
             for imgs, masks, hm, paf, _, _, paths in val_loader:
                 imgs, masks, hm, paf = imgs.to(device), masks.to(device), hm.to(device), paf.to(device)
-                seg_pred, pose_pred = model(imgs)
+                seg_pred, pose_pred, _ = model(imgs)
                 loss = criterion(seg_pred, masks, pose_pred, hm, paf)
                 val_loss += loss.item()
                 pm = (torch.sigmoid(seg_pred) > 0.5).cpu().numpy().astype(np.uint8)
