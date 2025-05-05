@@ -48,7 +48,7 @@ def evaluate(model, val_loader, device):
             # 兼容可能的多输出（refine 或单阶段）
             if isinstance(output, (tuple, list)):
                 if len(output) == 4:
-                    heat_pred, paf_pred = output[0], output[1]
+                    heat_pred, paf_pred = output[-2], output[-1]
                 elif len(output) == 2:
                     heat_pred, paf_pred = output
                 else:
@@ -305,13 +305,13 @@ class EarlyStopping:
     def __call__(self, now_ap):
         if self.best_ap is None:
             self.best_ap = now_ap
-            return False
-        if now_ap > self.best_ap + self.min_delta:
+        elif now_ap < self.best_ap + self.min_delta:
+            # 验证指标没有提升，计数
             self.counter += 1
             if self.counter >= self.patience:
                 self.early_stop = True
-            else: pass
         else:
+            # 验证指标有提升，重置计数并更新最佳
             self.best_ap = now_ap
             self.counter = 0
 
