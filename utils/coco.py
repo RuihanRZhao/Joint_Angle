@@ -12,6 +12,9 @@ from torch.utils.data import Dataset
 from typing import Tuple, List
 from tqdm import tqdm
 import requests
+
+import shutil
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 COCO_PERSON_SKELETON: List[Tuple[int, int]] = [
@@ -332,26 +335,13 @@ def ensure_coco_data(root):
 
     def _extract_zip(zip_path):
         print(f"Extracting {os.path.basename(zip_path)} to {root}...")
-        # 先读取所有成员
         with zipfile.ZipFile(zip_path, 'r') as zf:
             members = zf.infolist()
-
-        def _extract_member(member):
-            # 每个线程单独打开 zip，以保证线程安全
-            with zipfile.ZipFile(zip_path, 'r') as zf_inner:
-                zf_inner.extract(member, root)
-
-        # 使用多线程并行解压
-        max_workers = min(8, os.cpu_count() or 1)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_extract_member, m): m for m in members}
-            for _ in tqdm(as_completed(futures),
-                          total=len(members),
-                          desc="Extracting",
-                          unit="file"):
-                pass
-
+            for member in tqdm(members, desc="Extracting", unit="file"):
+                zf.extract(member, root)
         print(f"Extraction {os.path.basename(zip_path)} complete.")
+
+
     # 检查并下载/解压数据集
     expected_dirs = ['train2017', 'val2017', 'annotations']
     for zip_name, url in urls.items():
