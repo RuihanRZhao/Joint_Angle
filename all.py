@@ -2,17 +2,16 @@ import os
 import time
 import random
 import argparse
-import zipfile
 import numpy as np
 import torch
 import torch.nn.functional as F
-import requests
 from torch.utils.data import DataLoader
 from pycocotools.cocoeval import COCOeval
 import wandb
 import cv2
 from tqdm import tqdm
 from scipy.ndimage import maximum_filter
+from PIL import Image
 
 from models.Multi_Pose import MultiPoseNet
 
@@ -205,9 +204,10 @@ def evaluate(model, val_loader, device):
 
                     vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(tw, th),(0, 0, 255), (0, 0, 255))
 
+                    rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)  # numpy array, H×W×3, uint8
                     vis_list.append(
                         wandb.Image(
-                            cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB),
+                            rgb,
                             caption=f"Image {img_id} – GT(green) vs Pred(red)"
                         )
                     )
@@ -234,39 +234,34 @@ def train_one_epoch(model, loader, criterion, optimizer, device, teacher=None, d
     if teacher is not None:
         teacher.eval()
     epoch_loss = 0.0
-    for imgs, heatmaps, pafs in tqdm(loader, desc="Training:", leave=False):
+
+    for batch_idx, (imgs, heatmaps, pafs) in enumerate(tqdm(loader, desc="Training:", leave=False)):
         imgs = imgs.to(device)
         heatmaps = heatmaps.to(device)
         pafs = pafs.to(device)
+
         optimizer.zero_grad()
         # 前向传播
         student_out = model(imgs)
         # 监督损失
         loss = criterion(student_out, (heatmaps, pafs))
-        # 知识蒸馏损失
+
+        # 知识蒸馏（如有教师模型）
         if teacher is not None:
             with torch.no_grad():
                 teacher_out = teacher(imgs)
-            # 提取教师heatmap和PAF输出
+            # 提取教师输出
             if isinstance(teacher_out, (tuple, list)):
-                if len(teacher_out) == 4:
-                    teacher_heat = teacher_out[0]; teacher_paf = teacher_out[1]
-                elif len(teacher_out) == 2:
-                    teacher_heat, teacher_paf = teacher_out
-                else:
-                    teacher_heat = teacher_out[0]; teacher_paf = None
+                teacher_heat = teacher_out[0]
+                teacher_paf  = teacher_out[1] if len(teacher_out) > 1 else None
             else:
-                teacher_heat = teacher_out; teacher_paf = None
-            # 学生heatmap/PAF输出
+                teacher_heat, teacher_paf = teacher_out, None
+            # 提取学生输出
             if isinstance(student_out, (tuple, list)):
-                if len(student_out) == 4:
-                    student_heat = student_out[0]; student_paf = student_out[1]
-                elif len(student_out) == 2:
-                    student_heat, student_paf = student_out
-                else:
-                    student_heat = student_out[0]; student_paf = None
+                student_heat = student_out[0]
+                student_paf  = student_out[1] if len(student_out) > 1 else None
             else:
-                student_heat = student_out; student_paf = None
+                student_heat, student_paf = student_out, None
             # 计算蒸馏MSE损失
             distill_loss = 0.0
             if teacher_heat is not None:
@@ -274,9 +269,18 @@ def train_one_epoch(model, loader, criterion, optimizer, device, teacher=None, d
             if teacher_paf is not None and student_paf is not None:
                 distill_loss += F.mse_loss(student_paf, teacher_paf)
             loss = loss + distill_weight * distill_loss
+
         loss.backward()
+        # 计算梯度范数
+        total_norm = 0.0
+        for p in model.parameters():
+            if p.grad is not None:
+                total_norm += p.grad.data.norm(2).item() ** 2
+        total_norm = total_norm ** 0.5
+
         optimizer.step()
         epoch_loss += loss.item() * imgs.size(0)
+
     return epoch_loss / len(loader.dataset)
 
 # -----------------------
@@ -363,9 +367,20 @@ if __name__ == '__main__':
             model, train_loader, criterion, optimizer, device
         )
         scheduler.step()
+        wandb.log({
+            "train/epoch_loss": train_loss,
+            "train/lr": scheduler.get_last_lr()[0],
+            "epoch": epoch
+        })
 
         # 验证
         mean_ap, ap50, vis_images = evaluate(model, val_loader, device)
+
+        wandb.log({
+                "val/mAP": mean_ap,
+                "val/AP50": ap50,
+                "val/examples": vis_images
+        })
 
         elapsed = time.time() - start
         print(f"[Epoch {epoch}/{args.epochs}] "
