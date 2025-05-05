@@ -42,7 +42,7 @@ def evaluate(model, val_loader, device):
     idx_offset = 0
 
     with torch.no_grad():
-        for imgs, _, _ in val_loader:
+        for imgs, _, _ in tqdm(val_loader, desc="Evaluating", unit="batch", leave=False, total=len(val_loader)):
             imgs = imgs.to(device)
             output = model(imgs)
             # 兼容可能的多输出（refine 或单阶段）
