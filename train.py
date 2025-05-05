@@ -62,10 +62,10 @@ def log_samples(seg_gts, seg_preds, pose_gts, pose_preds, original_sizes, epoch)
         pred_pose = create_pose_visual(pred_kps, (orig_h, orig_w), SKELETON)
         # Log each image
         wandb.log({
-            f"val/gt_seg_epoch{epoch}_sample{i}": wandb.Image(gt_vis),
-            f"val/pred_seg_epoch{epoch}_sample{i}": wandb.Image(pred_vis),
-            f"val/gt_pose_epoch{epoch}_sample{i}": wandb.Image(gt_pose),
-            f"val/pred_pose_epoch{epoch}_sample{i}": wandb.Image(pred_pose)
+            f"viz/gt_seg_epoch{epoch}_sample{i}": wandb.Image(gt_vis),
+            f"viz/pred_seg_epoch{epoch}_sample{i}": wandb.Image(pred_vis),
+            f"viz/gt_pose_epoch{epoch}_sample{i}": wandb.Image(gt_pose),
+            f"viz/pred_pose_epoch{epoch}_sample{i}": wandb.Image(pred_pose)
         })
 
 
