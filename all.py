@@ -289,7 +289,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, teacher=None, d
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="轻量化多人姿态估计训练脚本")
     parser.add_argument('--data_root',   type=str,   default='run/data', help='COCO 数据集根目录')
-    parser.add_argument('--batch_size',  type=int,   default=32,         help='训练批大小')
+    parser.add_argument('--batch_size',  type=int,   default=64,         help='训练批大小')
     parser.add_argument('--lr',          type=float, default=1e-3,       help='初始学习率')
     parser.add_argument('--epochs',      type=int,   default=50,         help='训练轮数')
     parser.add_argument('--img_h',       type=int,   default=256,        help='输入图像高度')
@@ -298,7 +298,7 @@ if __name__ == '__main__':
     parser.add_argument('--hm_w',        type=int,   default=48,         help='输出热图宽度')
     parser.add_argument('--sigma',       type=int,   default=2,          help='高斯热图 sigma')
     parser.add_argument('--ohkm_k',      type=int,   default=8,          help='OHKM 困难关键点 topK')
-    parser.add_argument('--num_workers', type=int,   default=8,          help='DataLoader 线程数')
+    parser.add_argument('--num_workers', type=int,   default=16,          help='DataLoader 线程数')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
