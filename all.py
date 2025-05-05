@@ -135,9 +135,13 @@ def ensure_coco_data(root):
         return zip_path
 
     def _extract_zip(zip_path):
-        print(f"Extracting {os.path.basename(zip_path)}...")
+        print(f"Extracting {os.path.basename(zip_path)} to {root}...")
         with zipfile.ZipFile(zip_path, 'r') as zf:
-            zf.extractall(root)
+            members = zf.infolist()
+            # Use tqdm to show progress over the members list
+            for member in tqdm(members, desc="Extracting", unit="file"):
+                zf.extract(member, root)
+        print(f"Extraction {os.path.basename(zip_path)} complete.")
 
     # 检查并下载解压
     expected_dirs = ['train2017', 'val2017', 'annotations']
