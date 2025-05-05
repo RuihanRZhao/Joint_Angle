@@ -339,7 +339,12 @@ if __name__ == '__main__':
 
         # 加载教师模型
         teacher = MultiPoseNet(num_keypoints=NUM_KP, width_mult=1.0, refine=False).to(device)
-        teacher.load_state_dict(torch.load(local_teacher, map_location=device))
+        teacher_ckpt = torch.load(
+            local_teacher,
+            map_location=device,
+            weights_only=False  # PyTorch 2.6+ 参数，允许加载包含元数据的完整 checkpoint
+        )
+        teacher.load_state_dict(teacher_ckpt)
         teacher.eval()
     # ————————————————————
 
