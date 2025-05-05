@@ -333,28 +333,13 @@ def ensure_coco_data(root):
                             bar.update(len(chunk))
         return zip_path
 
-    def _extract_zip(zip_path, root):
-        """
-        优先调用系统 unzip（C 实现），fallback 到 Python 单线程 extractall。
-        """
+    def _extract_zip(zip_path):
         print(f"Extracting {os.path.basename(zip_path)} to {root}...")
-
-        # 如果系统有 unzip，则用它
-        if shutil.which("unzip"):
-            try:
-                subprocess.run(
-                    ["unzip", "-q", zip_path, "-d", root],
-                    check=True
-                )
-                print(f"Extraction {os.path.basename(zip_path)} complete via system unzip.")
-                return
-            except subprocess.CalledProcessError as e:
-                print(f"System unzip failed ({e}), falling back to Python extractall.")
-
-        # Python 单线程解压
         with zipfile.ZipFile(zip_path, 'r') as zf:
-            zf.extractall(root)
-        print(f"Extraction {os.path.basename(zip_path)} complete via Python zipfile.")
+            members = zf.infolist()
+            for member in tqdm(members, desc="Extracting", unit="file"):
+                zf.extract(member, root)
+        print(f"Extraction {os.path.basename(zip_path)} complete.")
 
 
     # 检查并下载/解压数据集
