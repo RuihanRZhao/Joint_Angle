@@ -505,7 +505,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
 # -----------------------
 # Main
 # -----------------------
-def main():
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="轻量化多人骨骼姿态检测训练脚本")
     parser.add_argument('--data_root', type=str, default='run/data', help='Path to COCO dataset root directory')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size for training')
@@ -612,5 +612,4 @@ def main():
             torch.save(model.state_dict(), 'run/models/best_model.pth')
     wandb.finish()
 
-if __name__ == '__main__':
-    main()
+
