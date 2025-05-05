@@ -1,209 +1,126 @@
 import cv2
 import numpy as np
-import torch
+from typing import List, Tuple, Dict
 
-# COCO 骨骼对 (0-based index)
-SKELETON = [
-    (15,13),(13,11),(16,14),(14,12),(11,12),
-    (5,11),(6,12),(5,6),(5,7),(7,9),
-    (6,8),(8,10),(1,2),(0,1),(0,2),
-    (1,3),(2,4),(3,5),(4,6)
-]
+from pycocotools.coco import COCO
 
-COCO_KEYPOINT_NAMES = [
-    "nose", "left_eye", "right_eye", "left_ear", "right_ear",
-    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
-    "left_wrist", "right_wrist", "left_hip", "right_hip",
-    "left_knee", "right_knee", "left_ankle", "right_ankle"
-]
 
-def overlay_mask(image: np.ndarray, mask: np.ndarray, alpha: float = 0.6) -> np.ndarray:
+# COCO skeleton definition: list of (start_kp, end_kp) index pairs
+# e.g. COCO_PERSON_SKELETON = [(15,13), (13,11), ...]
+
+
+def visualize_coco_gt_keypoints(
+    img: np.ndarray,
+    anns: List[Dict],
+    skeleton: List[Tuple[int, int]],
+    output_size: Tuple[int, int]
+) -> np.ndarray:
     """
-    在 RGB 图像上叠加二值分割 mask。
+    在原始图片上绘制 COCO 格式的 Ground Truth 关键点骨架。
 
     Args:
-      - image: 原始 RGB 图像，shape=(H, W, 3), dtype=uint8 或 float
-      - mask:  单通道 mask，shape=(h, w)，值为0-1或0-255
-      - alpha: 叠加权重
+        img (np.ndarray): 通过 cv2.imread 读取的原始图像 (BGR 通道)，形状 (H, W, 3)。
+        anns (List[Dict]): 来自 coco_gt.loadAnns 的注释列表，每个 ann 格式:
+            {
+                'keypoints': [x0, y0, v0, x1, y1, v1, ..., x16, y16, v16],  # 长度 = 3 * K（K=17）
+                'num_keypoints': int,  # 标注的有效关键点数量
+                ... # 其他字段可忽略
+            }
+        skeleton (List[Tuple[int,int]]): COCO 骨架拓扑结构，关键点索引对列表。
+        output_size (Tuple[int,int]): 可视化时将图像缩放到的目标尺寸 (width, height)。
 
     Returns:
-      - overlay_rgb: 叠加后的 RGB 图像，shape=(H, W, 3)
+        vis_img (np.ndarray): 绘制好 GT 骨架的图，BGR 通道，形状 (output_h, output_w, 3)。
     """
-    H, W = image.shape[:2]
+    # 保存原始尺寸
+    orig_h, orig_w = img.shape[:2]
+    out_w, out_h = output_size
 
-    # 1) 标准化 mask 到 [0,255] uint8
-    m = mask.copy()
-    if m.dtype != np.uint8:
-        m = (m * 255).astype(np.uint8)
-    # 2) resize 到原图大小
-    m_resized = cv2.resize(m, (W, H), interpolation=cv2.INTER_NEAREST)
-    # 3) 上色：BGR 红色
-    m_bgr = np.zeros((H, W, 3), dtype=np.uint8)
-    m_bgr[:, :, 2] = m_resized  # 红色通道
-    # 4) 转为 BGR 原图
-    img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR) if image.ndim == 3 else image
-    # 5) 叠加
-    overlay_bgr = cv2.addWeighted(img_bgr, 1 - alpha, m_bgr, alpha, 0)
-    # 6) 转回 RGB
-    overlay_rgb = cv2.cvtColor(overlay_bgr, cv2.COLOR_BGR2RGB)
-    return overlay_rgb
+    # Resize 原图到可视化尺寸
+    vis_img = cv2.resize(img, (out_w, out_h))
 
-
-def draw_heatmap(image: np.ndarray, heatmap: np.ndarray, alpha: float = 0.6) -> np.ndarray:
-    """
-    在 RGB 图像上叠加单通道热力图。
-
-    Args:
-      - image: 原始 RGB 图像，shape=(H, W, 3)
-      - heatmap: 单通道热力图，shape=(h, w)
-      - alpha: 叠加权重，0~1，越大热力图越醒目
-
-    Returns:
-      - overlay: 叠加后的 RGB 图像，shape=(H, W, 3)
-    """
-    H, W = image.shape[:2]
-    # 1) 先把 heatmap 归一化到 [0,255] 并转成 uint8
-    hm = np.clip(heatmap, 0, 1)       # 确保在 [0,1]
-    hm = (hm * 255).astype(np.uint8)  # [h, w]
-
-    # 2) 上/下采样到和原图大小一致
-    hm_resized = cv2.resize(hm, (W, H), interpolation=cv2.INTER_LINEAR)
-
-    # 3) 应用伪彩色映射，得到 3 通道图
-    hm_color = cv2.applyColorMap(hm_resized, cv2.COLORMAP_JET)  # [H, W, 3], BGR
-
-    # 4) OpenCV 默认是 BGR，把原图也转为 BGR
-    img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-    # 5) 叠加
-    overlay_bgr = cv2.addWeighted(img_bgr, 1-alpha, hm_color, alpha, 0)
-
-    # 6) 再转回 RGB 返回
-    overlay_rgb = cv2.cvtColor(overlay_bgr, cv2.COLOR_BGR2RGB)
-    return overlay_rgb
-
-
-def draw_paf(image, paf, stride=8, scale=4, color=(255,0,0), thickness=1):
-    """
-    在 image 上绘制 PAF 向量场。
-    paf: [2L, H, W] float32, x-通道，y-通道交替存储
-    stride: 每隔 stride 像素绘制一个向量
-    scale: 缩放向量长度显示
-    """
-    h, w = paf.shape[1:]
-    out = image.copy()
-    for idx, (a,b) in enumerate(SKELETON):
-        vx = paf[2*idx]
-        vy = paf[2*idx+1]
-        # 在网格点上绘制
-        for y in range(0, h, stride):
-            for x in range(0, w, stride):
-                pt1 = (int(x*scale), int(y*scale))
-                dx = int(vx[y,x] * scale)
-                dy = int(vy[y,x] * scale)
-                pt2 = (pt1[0]+dx, pt1[1]+dy)
-                cv2.arrowedLine(out, pt1, pt2, color, thickness, tipLength=0.3)
-    return out
-
-
-def draw_keypoints_linked_multi(image, kps, vis, limb_pairs=None, color=(0,255,0), radius=3, thickness=2):
-    """
-    在 RGB 图像上绘制多人体关键点及连线。
-    - image: numpy.ndarray，shape=(H,W,3)
-    - kps:   可以是 list/Tensor/ndarray，表示 [(K,2),…] 或 已堆叠的 (P,K,2)
-    - vis:   list/Tensor/ndarray，表示 [K,…] 或 (P,K)
-    """
-    # — 1. 统一格式到 numpy.ndarray —
-    # 关键点
-    if isinstance(kps, list):
-        arrs = []
-        for x in kps:
-            if torch.is_tensor(x):
-                arrs.append(x.cpu().numpy())
+    # 绘制每个人的关键点和骨架连接
+    for ann in anns:
+        if ann.get('num_keypoints', 0) == 0:
+            continue
+        kps = ann['keypoints']  # 长度 3*K
+        pts: List[Tuple[int,int]] = []
+        # 按比例将 COCO (x,y) 映射到可视化图像尺寸
+        for i in range(len(kps) // 3):
+            x, y, v = kps[3*i:3*i+3]
+            if v > 0:
+                px = int(x * (out_w / orig_w))
+                py = int(y * (out_h / orig_h))
+                pts.append((px, py))
             else:
-                arrs.append(np.asarray(x))
-        kps = np.stack(arrs, axis=0)  # [P,K,2]
-    elif torch.is_tensor(kps):
-        kps = kps.cpu().numpy()
-    else:
-        kps = np.asarray(kps)
+                pts.append(None)
 
-    # 可见性
-    if isinstance(vis, list):
-        arrs = []
-        for x in vis:
-            if torch.is_tensor(x):
-                arrs.append(x.cpu().numpy())
-            else:
-                arrs.append(np.asarray(x))
-        vis = np.stack(arrs, axis=0)  # [P,K] or if each vis is 1-D [K]
-    elif torch.is_tensor(vis):
-        vis = vis.cpu().numpy()
-    else:
-        vis = np.asarray(vis)
+        # 绘制骨架连线 (绿色)
+        for a, b in skeleton:
+            if pts[a] is not None and pts[b] is not None:
+                cv2.line(vis_img, pts[a], pts[b], (0, 255, 0), thickness=2)
 
-    # — 2. 兼容一维 vis（只给了每个人一个标志）—
-    if vis.ndim == 1:
-        P = kps.shape[0]
-        K = kps.shape[1]
-        # 把每个人所有关键点都当作可见
-        vis = np.ones((P, K), dtype=int)
+        # 绘制关键点 (绿色实心圆)
+        for pt in pts:
+            if pt is not None:
+                cv2.circle(vis_img, pt, radius=3, color=(0, 255, 0), thickness=-1)
 
-    # — 3. 准备骨架对列表 —
-    P, K, _ = kps.shape
-    H, W = image.shape[:2]
-    if limb_pairs is None:
-        limb_pairs = [
-            (15,13),(13,11),(16,14),(14,12),(11,12),
-            (5,11),(6,12),(5,6),(5,7),(6,8),
-            (7,9),(8,10),(1,2),(0,1),(0,2),
-            (1,3),(2,4),(3,5),(4,6)
-        ]
+    return vis_img
 
-    # — 4. 绘制 —
-    output = image.copy()
-    for p in range(P):
-        for k in range(K):
-            if vis[p, k] > 0:
-                x, y = int(kps[p, k, 0]), int(kps[p, k, 1])
-                cv2.circle(output, (x, y), radius, color, -1)
-        for a, b in limb_pairs:
-            if vis[p, a] > 0 and vis[p, b] > 0:
-                xa, ya = int(kps[p, a, 0]), int(kps[p, a, 1])
-                xb, yb = int(kps[p, b, 0]), int(kps[p, b, 1])
-                cv2.line(output, (xa, ya), (xb, yb), color, thickness)
-
-    return output
-
-
-def visualize_sample(
-    image,
-    mask=None,
-    heatmaps=None,
-    pafs=None,
-    multi_kps=None,
-    multi_vis=None
-):
+if __name__ == '__main__':
     """
-    综合可视化：
-      - mask: segmentation overlay
-      - heatmaps: list 或 ndarray [K,H,W]
-      - pafs: ndarray [2L,H,W]
-      - multi_kps/multi_vis: [P,17,2] & [P,17]
-    返回 dict of {name: image}
+    测试 visualize_coco_gt_keypoints 函数的主函数。
     """
-    outputs = {}
-    base = image.copy()
-    if mask is not None:
-        outputs['segmentation'] = overlay_mask(base, mask)
-    if heatmaps is not None:
-        # 展示第一个 heatmap 作为示例，可自行选通道
-        hm0 = heatmaps[0]
-        outputs['heatmap_0'] = draw_heatmap(base, hm0)
-    if pafs is not None:
-        outputs['paf_field'] = draw_paf(base, pafs)
-    if multi_kps is not None and multi_vis is not None:
-        outputs['keypoints'] = draw_keypoints_linked_multi(base, multi_kps, multi_vis)
-    return outputs
+    import argparse
 
+    parser = argparse.ArgumentParser(
+        description="测试 COCO GT 关键点可视化"
+    )
+    parser.add_argument(
+        '--img_path', type=str, default= 'run/data/val2017/000000000001.jpg',
+        help='原始图像路径，例如 run/data/val2017/000000000001.jpg'
+    )
+    parser.add_argument(
+        '--ann_file', type=str, default= 'run/data/annotations/person_keypoints_val2017.json',
+        help='COCO 注释文件路径，例如 run/data/annotations/person_keypoints_val2017.json'
+    )
+    parser.add_argument(
+        '--img_id', type=int, default= 1,
+        help='COCO 图像 ID，例如 1'
+    )
+    parser.add_argument(
+        '--out', type=str, default='vis_gt.jpg',
+        help='可视化输出文件路径'
+    )
+    parser.add_argument(
+        '--width', type=int, default=192,
+        help='可视化图像宽度'
+    )
+    parser.add_argument(
+        '--height', type=int, default=256,
+        help='可视化图像高度'
+    )
+    args = parser.parse_args()
 
+    # 加载原始图像
+    img = cv2.imread(args.img_path)
+    if img is None:
+        print(f"无法加载图像: {args.img_path}")
+
+    # 加载 COCO 注释
+    coco = COCO(args.ann_file)
+    anns = coco.loadAnns(coco.getAnnIds(
+        imgIds=[args.img_id], catIds=[1], iscrowd=None
+    ))
+
+    # 调用可视化函数
+    vis_img = visualize_coco_gt_keypoints(
+        img, anns, COCO_PERSON_SKELETON,
+        output_size=(args.width, args.height)
+    )
+
+    # 显示并保存结果
+    cv2.imshow('GT Keypoints', vis_img)
+    cv2.imwrite(args.out, vis_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
