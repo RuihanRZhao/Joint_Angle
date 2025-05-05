@@ -393,6 +393,3 @@ if __name__ == '__main__':
             best_ap = mean_ap
             torch.save(model.state_dict(), os.path.join(save_dir, 'best_model.pth'))
 
-        # 保存可视化结果
-        for idx, img in enumerate(vis_images):
-            img.save(f"run/models/epoch{epoch}_vis{idx}.png")
