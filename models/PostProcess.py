@@ -1,12 +1,9 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import cv2
-from scipy.ndimage import maximum_filter
-import wandb
 from typing import List, Dict, Tuple, Optional
 
-from utils.visualization import visualize_coco_keypoints
+import torch.nn.functional as F
 from utils.coco import COCO_PERSON_SKELETON
 
 class PostProcess(nn.Module):
