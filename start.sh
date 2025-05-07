@@ -4,13 +4,13 @@ echo "卸载旧版 torch、torchvision、torchaudio..."
 pip3 uninstall -y torch torchvision torchaudio
 
 # 安装与 CUDA 12.8 兼容的 PyTorch 2.7.0 及配套包
-echo "安装 torch==2.7.0、torchvision==0.22.0、torchaudio==2.7.0（CUDA 12.8 支持）..."
-pip3 install --upgrade pip
-pip3 install \
-    torch==2.7.0 \
-    torchvision==0.22.0 \
-    torchaudio==2.7.0 \
-    --index-url https://download.pytorch.org/whl/cu128
+#echo "安装 torch==2.7.0、torchvision==0.22.0、torchaudio==2.7.0（CUDA 12.8 支持）..."
+#pip3 install --upgrade pip
+#pip3 install \
+#    torch==2.7.0 \
+#    torchvision==0.22.0 \
+#    torchaudio==2.7.0 \
+#    --index-url https://download.pytorch.org/whl/cu128
 
 
 # 安装完成后，简单验证
@@ -25,4 +25,3 @@ EOF
 
 
 pip3 install -r requirements.txt
-pip install 'git+https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup'
