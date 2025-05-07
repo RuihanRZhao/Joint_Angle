@@ -55,7 +55,7 @@ def evaluate(model, val_loader, device, epoch):
                 )
 
                 img_metas.append({
-                    'img_id': img_id.item(),
+                    'img_id': img_id,
                     'if_viz': img_id in viz_ids,
                     'orig_h': th,
                     'orig_w': tw,
@@ -72,7 +72,7 @@ def evaluate(model, val_loader, device, epoch):
                 # 可视化 GT(green) vs Pred(red)
                 if img['if_viz']:
 
-                    img_info = coco_gt.loadImgs([img_id])[0]
+                    img_info = coco_gt.loadImgs([img['img_id']])[0]
                     img_path = os.path.join(
                         val_loader.dataset.root,
                         val_loader.dataset.img_folder,
