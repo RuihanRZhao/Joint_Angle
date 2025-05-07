@@ -2,6 +2,8 @@ import os
 import time
 import random
 import argparse
+from typing import List
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -60,7 +62,7 @@ def evaluate(model, val_loader, device, epoch):
                 )
 
                 img_metas.append({
-                    'image_id': img_id,
+                    'img_id': img_id,
                     'orig_img': orig_img,
                     'orig_h': th,
                     'orig_w': tw,
