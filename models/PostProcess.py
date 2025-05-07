@@ -167,7 +167,7 @@ class PostProcess(nn.Module):
                         kplist += [x, y, v]
                     pred_anns.append({'keypoints': kplist, 'num_keypoints': num_kp})
 
-            pred_ann_list.append({'image_id': img_id, 'pred_anns': pred_anns})
+                pred_ann_list.append({'image_id': img_id, 'pred_anns': pred_anns})
 
         return results, pred_ann_list
 
