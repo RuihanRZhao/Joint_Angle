@@ -12,8 +12,6 @@ from pycocotools.cocoeval import COCOeval
 import wandb
 import cv2
 from tqdm import tqdm
-from scipy.ndimage import maximum_filter
-from PIL import Image
 
 from models.Multi_Pose import MultiPoseNet
 
@@ -57,7 +55,7 @@ def evaluate(model, val_loader, device, epoch):
                 )
 
                 img_metas.append({
-                    'img_id': img_id,
+                    'img_id': img_id.item(),
                     'if_viz': img_id in viz_ids,
                     'orig_h': th,
                     'orig_w': tw,
