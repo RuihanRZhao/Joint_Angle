@@ -36,6 +36,7 @@ def evaluate(model, val_loader, device, epoch):
 
     img_ids = []
     vis_list = []
+    results = []
 
     # 随机选取 n_vis 张图做可视化
     n_vis = getattr(wandb.config, 'n_vis', 3)
@@ -62,7 +63,10 @@ def evaluate(model, val_loader, device, epoch):
                     'gt_anns': gt_anns,
                 })
 
-            heat_pred, paf_pred, results, pred_ann_list = model(imgs, img_metas)
+            heat_pred, paf_pred, result , pred_ann_list = model(imgs, img_metas)
+
+            for i in result:
+                results.append(i)
 
 
             for img in img_metas:
