@@ -47,8 +47,6 @@ def evaluate(model, val_loader, device, epoch):
         for imgs, _, _, img_ids  in tqdm(val_loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Evaluating", unit="batch", leave=False, total=len(val_loader)):
             imgs = imgs.to(device)
 
-            print(imgs.shape)
-
             img_metas: List[Dict] = []
 
             # ready for eval
