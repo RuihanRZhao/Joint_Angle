@@ -46,6 +46,9 @@ def evaluate(model, val_loader, device, epoch):
     with torch.no_grad():
         for imgs, _, _ in tqdm(val_loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Evaluating", unit="batch", leave=False, total=len(val_loader)):
             imgs = imgs.to(device)
+
+            print(imgs.shape)
+
             img_metas: List[Dict] = []
 
             # ready for eval
@@ -101,7 +104,6 @@ def evaluate(model, val_loader, device, epoch):
                         )
                     )
 
-    print(results)
 
     # 6. 运行 COCOeval 并返回指标
     coco_dt = coco_gt.loadRes(results)
