@@ -73,7 +73,7 @@ def evaluate(model, val_loader, device, epoch):
 
             for img in img_metas:
                 # 可视化 GT(green) vs Pred(red)
-                if img['image_id'] in vis_ids:
+                if img['img_id'] in vis_ids:
                     orig_img = img['orig_img']
                     if orig_img is None:
                         orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
@@ -83,7 +83,7 @@ def evaluate(model, val_loader, device, epoch):
                     vis_img = visualize_coco_keypoints(orig_img, img['gt_anns'], COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
 
                     # 再画 Pred
-                    pred_anns = next((result for result in pred_ann_list if result.get('image_id') == img_id), None)
+                    pred_anns = next((result for result in pred_ann_list if result.get('img_id') == img['img_id']), None)
 
                     vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
 
@@ -91,7 +91,7 @@ def evaluate(model, val_loader, device, epoch):
                     vis_list.append(
                         wandb.Image(
                             rgb,
-                            caption=f"Image {img_id} – GT(green) vs Pred(red)"
+                            caption=f"Image {img['img_id']} – GT(green) vs Pred(red)"
                         )
                     )
 
