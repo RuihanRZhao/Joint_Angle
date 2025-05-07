@@ -33,7 +33,7 @@ def visualize_coco_keypoints(
     """
     # 保存原始尺寸
     orig_h, orig_w = img.shape[:2]
-    out_w, out_h = output_size
+    out_h, out_w = output_size
 
     # Resize 原图到可视化尺寸
     vis_img = cv2.resize(img, (out_w, out_h))

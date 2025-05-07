@@ -15,15 +15,5 @@ wandb          # 训练可视化与日志
 pydantic<2.0.0
 pycocotools
 
-early-stopping-pytorch
-
-# SegFormer from Hugging Face
-transformers>=4.20.0
-
-# ViTPose backbone via timm
-timm>=0.6.12
-
-# (Optional) for progress bars, logging, etc.
-tqdm>=4.62.0
 
 scipy
