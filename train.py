@@ -84,6 +84,7 @@ def evaluate(model, val_loader, device, epoch):
 
                     # 再画 Pred
                     pred_anns = next((result for result in pred_ann_list if result.get('img_id') == img['img_id']), None)
+                    print(pred_anns)
 
                     vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
 
