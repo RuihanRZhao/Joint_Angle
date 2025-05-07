@@ -44,7 +44,7 @@ def evaluate(model, val_loader, device, epoch):
     idx_offset = 0
 
     with torch.no_grad():
-        for imgs, _, _ in tqdm(val_loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Evaluating", unit="batch", leave=False, total=len(val_loader)):
+        for batch_idx, (imgs, _, _) in tqdm(enumerate(val_loader), desc=f"Epoch: {epoch[0]}/{epoch[1]} Evaluating", unit="batch", leave=False, total=len(val_loader)):
             imgs = imgs.to(device)
 
             print(imgs.shape)
@@ -52,7 +52,7 @@ def evaluate(model, val_loader, device, epoch):
             img_metas: List[Dict] = []
 
             # ready for eval
-            for img_id in val_loader.dataset.img_ids:
+            for img_id in val_loader.dataset.img_ids[batch_idx * val_loader.batch_size : (batch_idx + 1) * val_loader.batch_size]:
                 th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
                 gt_anns = coco_gt.loadAnns(
                     coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
@@ -103,6 +103,8 @@ def evaluate(model, val_loader, device, epoch):
                             caption=f"Image {img['img_id']} – GT(green) vs Pred(red)"
                         )
                     )
+
+            idx_offset += heat_pred.shape[0]
 
 
     # 6. 运行 COCOeval 并返回指标
@@ -249,7 +251,7 @@ if __name__ == '__main__':
     )
     val_loader = DataLoader(
         val_ds,
-        batch_size=1,
+        batch_size=16,
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True
