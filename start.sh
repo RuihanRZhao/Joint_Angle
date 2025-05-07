@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 卸载现有 PyTorch、TorchVision、TorchAudio
-echo "卸载旧版 torch、torchvision、torchaudio..."
-pip3 uninstall -y torch torchvision torchaudio
+#echo "卸载旧版 torch、torchvision、torchaudio..."
+#pip3 uninstall -y torch torchvision torchaudio
 
 # 安装与 CUDA 12.8 兼容的 PyTorch 2.7.0 及配套包
 #echo "安装 torch==2.7.0、torchvision==0.22.0、torchaudio==2.7.0（CUDA 12.8 支持）..."
