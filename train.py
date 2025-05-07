@@ -47,9 +47,6 @@ def evaluate(model, val_loader, device, epoch):
             imgs = imgs.to(device)
             img_metas: List[Dict] = []
 
-            print(0)
-
-
             # ready for eval
             for img_id in val_loader.dataset.img_ids:
                 th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
@@ -67,7 +64,6 @@ def evaluate(model, val_loader, device, epoch):
 
             heat_pred, paf_pred, results, pred_ann_list = model(imgs, img_metas)
 
-            print(1)
 
             for img in img_metas:
                 # 可视化 GT(green) vs Pred(red)
@@ -91,8 +87,6 @@ def evaluate(model, val_loader, device, epoch):
                     # 再画 Pred
                     pred_anns = (result for result in pred_ann_list if result.get('img_id') == img['img_id'])
 
-                    print(pred_anns)
-
                     vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
 
                     rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)  # numpy array, H×W×3, uint8
@@ -103,8 +97,7 @@ def evaluate(model, val_loader, device, epoch):
                         )
                     )
 
-            print(2)
-
+    print(results)
 
     # 6. 运行 COCOeval 并返回指标
     coco_dt = coco_gt.loadRes(results)
