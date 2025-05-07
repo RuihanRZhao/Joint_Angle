@@ -39,7 +39,7 @@ def evaluate(model, val_loader, device, epoch):
 
     # 随机选取 n_vis 张图做可视化
     n_vis = getattr(wandb.config, 'n_vis', 3)
-    vis_ids = random.sample(val_loader.dataset.img_ids, min(n_vis, len(val_loader.dataset.img_ids)))
+    viz_ids = random.sample(val_loader.dataset.img_ids, min(n_vis, len(val_loader.dataset.img_ids)))
     idx_offset = 0
 
     with torch.no_grad():
@@ -52,13 +52,6 @@ def evaluate(model, val_loader, device, epoch):
 
             # ready for eval
             for img_id in val_loader.dataset.img_ids:
-                img_info = coco_gt.loadImgs([img_id])[0]
-                img_path = os.path.join(
-                        val_loader.dataset.root,
-                        val_loader.dataset.img_folder,
-                        img_info['file_name']
-                    )
-                orig_img = cv2.imread(img_path)
                 th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
                 gt_anns = coco_gt.loadAnns(
                     coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
@@ -66,7 +59,7 @@ def evaluate(model, val_loader, device, epoch):
 
                 img_metas.append({
                     'img_id': img_id,
-                    'orig_img': orig_img,
+                    'if_viz': img_id in viz_ids,
                     'orig_h': th,
                     'orig_w': tw,
                     'gt_anns': gt_anns,
@@ -78,8 +71,16 @@ def evaluate(model, val_loader, device, epoch):
 
             for img in img_metas:
                 # 可视化 GT(green) vs Pred(red)
-                if img['img_id'] in vis_ids:
-                    orig_img = img['orig_img']
+                if img['if_viz']:
+
+                    img_info = coco_gt.loadImgs([img_id])[0]
+                    img_path = os.path.join(
+                        val_loader.dataset.root,
+                        val_loader.dataset.img_folder,
+                        img_info['file_name']
+                    )
+
+                    orig_img = cv2.imread(img_path)
                     if orig_img is None:
                         orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
 

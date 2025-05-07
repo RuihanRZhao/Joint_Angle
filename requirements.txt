@@ -15,3 +15,5 @@ pydantic<2.0.0
 pycocotools
 
 tqdm
+
+spicy

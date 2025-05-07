@@ -29,8 +29,7 @@ class PostProcess(nn.Module):
         self,
         heat_pred: torch.Tensor,        # [B, K, H, W]
         paf_pred: Optional[torch.Tensor],# [B, 2L, H, W] or None
-        img_metas: List[Dict]           # list of dicts with keys:
-                                        # 'img_id', 'orig_img', 'orig_h','orig_w', 'gt_anns'
+        img_metas: List[Dict]           # list of dicts with keys: 'img_id', 'if_viz', 'orig_h','orig_w', 'gt_anns'
     ) -> Tuple[List[Dict], List[Dict]]:
         # heat_pred batch vs img_metas length consistency
         B_heat, K, H, W = heat_pred.shape
@@ -49,8 +48,8 @@ class PostProcess(nn.Module):
         for i in range(B_heat):
             meta = img_metas[i]
             img_id = meta['img_id']
-            orig_img = meta.get('orig_img', None)
             orig_h, orig_w = meta['orig_h'], meta['orig_w']
+            if_viz = meta['if_viz']
 
             # collect peaks per channel
             all_peaks: List[List[Tuple[float, float, float]]] = []
@@ -151,21 +150,22 @@ class PostProcess(nn.Module):
                 })
 
             # prepare visualization annotations
-            pred_anns = []
-            for p in persons:
-                kplist = []
-                num_kp = 0
-                for k in range(K):
-                    if k in p:
-                        x, y, sc = all_peaks[k][p[k]]
-                        x *= orig_w / W;
-                        y *= orig_h / H
-                        v = 2 if sc > 0 else 0;
-                        num_kp += 1
-                    else:
-                        x = y = v = 0.0
-                    kplist += [x, y, v]
-                pred_anns.append({'keypoints': kplist, 'num_keypoints': num_kp})
+            if if_viz:
+                pred_anns = []
+                for p in persons:
+                    kplist = []
+                    num_kp = 0
+                    for k in range(K):
+                        if k in p:
+                            x, y, sc = all_peaks[k][p[k]]
+                            x *= orig_w / W;
+                            y *= orig_h / H
+                            v = 2 if sc > 0 else 0;
+                            num_kp += 1
+                        else:
+                            x = y = v = 0.0
+                        kplist += [x, y, v]
+                    pred_anns.append({'keypoints': kplist, 'num_keypoints': num_kp})
 
             pred_ann_list.append({'image_id': img_id, 'pred_anns': pred_anns})
 
