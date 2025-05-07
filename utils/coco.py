@@ -299,7 +299,7 @@ class COCOPoseDataset(Dataset):
                 paf_xy[:, y1:y2, x1:x2] = paf_xy2[:, y1:y2, x1:x2]
         # 转换图像为张量并标准化
         img_tensor = self.transform(Image.fromarray(img.astype(np.uint8)))
-        return img_tensor, torch.from_numpy(heatmaps), torch.from_numpy(paf_xy)
+        return img_tensor, torch.from_numpy(heatmaps), torch.from_numpy(paf_xy), img_id
 
 
 def ensure_coco_data(root):
