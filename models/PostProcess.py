@@ -169,5 +169,7 @@ class PostProcess(nn.Module):
 
                 pred_ann_list.append({'image_id': img_id, 'pred_anns': pred_anns})
 
+
+        print("in PP: ", results)
         return results, pred_ann_list
 
