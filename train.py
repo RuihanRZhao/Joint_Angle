@@ -47,6 +47,9 @@ def evaluate(model, val_loader, device, epoch):
             imgs = imgs.to(device)
             img_metas: List[Dict] = []
 
+            print(0)
+
+
             # ready for eval
             for img_id in val_loader.dataset.img_ids:
                 img_info = coco_gt.loadImgs([img_id])[0]
@@ -71,7 +74,7 @@ def evaluate(model, val_loader, device, epoch):
 
             heat_pred, paf_pred, results, pred_ann_list = model(imgs, img_metas)
 
-            print(pred_ann_list)
+            print(1)
 
             for img in img_metas:
                 # 可视化 GT(green) vs Pred(red)
@@ -98,6 +101,8 @@ def evaluate(model, val_loader, device, epoch):
                             caption=f"Image {img['img_id']} – GT(green) vs Pred(red)"
                         )
                     )
+
+            print(2)
 
 
     # 6. 运行 COCOeval 并返回指标
