@@ -33,8 +33,10 @@ class PostProcess(nn.Module):
                                         # 'img_id', 'orig_img', 'orig_h','orig_w', 'gt_anns'
     ) -> Tuple[List[Dict], List[Dict]]:
         B, K, H, W = heat_pred.shape
-        heat_np = heat_pred.detach().cpu().numpy()
-        paf_np  = paf_pred.detach().cpu().numpy() if paf_pred is not None else None
+        heat_np = heat_pred.detach()
+        paf_np  = paf_pred.detach() if paf_pred is not None else None
+
+        print(heat_np.shape)
 
         results: List[Dict] = []
         pred_ann_list: List[Dict] =[]
