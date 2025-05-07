@@ -55,7 +55,7 @@ def evaluate(model, val_loader, device, epoch):
                 )
 
                 img_metas.append({
-                    'img_id': img_id,
+                    'img_id': img_id.item(),
                     'if_viz': img_id in viz_ids,
                     'orig_h': th,
                     'orig_w': tw,
