@@ -2,7 +2,7 @@ import os
 import time
 import random
 import argparse
-from typing import List
+from typing import List, Dict
 
 import numpy as np
 import torch
@@ -71,6 +71,8 @@ def evaluate(model, val_loader, device, epoch):
 
             heat_pred, paf_pred, results, pred_ann_list = model(imgs, img_metas)
 
+            print(pred_ann_list)
+
             for img in img_metas:
                 # 可视化 GT(green) vs Pred(red)
                 if img['img_id'] in vis_ids:
@@ -83,7 +85,8 @@ def evaluate(model, val_loader, device, epoch):
                     vis_img = visualize_coco_keypoints(orig_img, img['gt_anns'], COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
 
                     # 再画 Pred
-                    pred_anns = next((result for result in pred_ann_list if result.get('img_id') == img['img_id']), None)
+                    pred_anns = (result for result in pred_ann_list if result.get('img_id') == img['img_id'])
+
                     print(pred_anns)
 
                     vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
