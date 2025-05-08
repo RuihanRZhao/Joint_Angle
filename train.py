@@ -49,10 +49,14 @@ def evaluate(model, val_loader, device, epoch):
 
             # ready for eval
             for img_id in img_ids:
+
+
                 th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
                 gt_anns = coco_gt.loadAnns(
-                    coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
+                    coco_gt.getAnnIds(imgIds=[img_id.item()], catIds=[1], iscrowd=None)
                 )
+
+                print(gt_anns)
 
                 img_metas.append({
                     'img_id': img_id.item(),
@@ -71,7 +75,9 @@ def evaluate(model, val_loader, device, epoch):
             for meta in img_metas:
                 # 可视化 GT(green) vs Pred(red)
                 if meta['img_id'] in viz_ids:
+
                     print(meta)
+
                     img_info = coco_gt.loadImgs([meta['img_id']])[0]
                     img_path = os.path.join(
                         val_loader.dataset.root,
@@ -96,7 +102,7 @@ def evaluate(model, val_loader, device, epoch):
                     vis_list.append(
                         wandb.Image(
                             rgb,
-                            caption=f"Image {meta['img_id']} – GT(green) vs Pred(red)"
+                            caption=f"IMG {meta['img_id']}: GT(green) vs Pred(red)"
                         )
                     )
 
