@@ -68,11 +68,11 @@ def evaluate(model, val_loader, device, epoch):
                 results.append(i)
 
 
-            for img in img_metas:
+            for meta in img_metas:
                 # 可视化 GT(green) vs Pred(red)
-                if img['if_viz']:
-
-                    img_info = coco_gt.loadImgs([img['img_id']])[0]
+                if meta['img_id'] in viz_ids:
+                    print(meta)
+                    img_info = coco_gt.loadImgs([meta['img_id']])[0]
                     img_path = os.path.join(
                         val_loader.dataset.root,
                         val_loader.dataset.img_folder,
@@ -83,12 +83,12 @@ def evaluate(model, val_loader, device, epoch):
                     if orig_img is None:
                         orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
 
-                    h, w = img['orig_h'], img['orig_w']
+                    h, w = meta['orig_h'], meta['orig_w']
                     # 先画 GT
-                    vis_img = visualize_coco_keypoints(orig_img, img['gt_anns'], COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
+                    vis_img = visualize_coco_keypoints(orig_img, meta['gt_anns'], COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
 
                     # 再画 Pred
-                    pred_anns = (result for result in pred_ann_list if result.get('img_id') == img['img_id'])
+                    pred_anns = (result for result in pred_ann_list if result.get('img_id') == meta['img_id'])
 
                     vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
 
@@ -96,7 +96,7 @@ def evaluate(model, val_loader, device, epoch):
                     vis_list.append(
                         wandb.Image(
                             rgb,
-                            caption=f"Image {img['img_id']} – GT(green) vs Pred(red)"
+                            caption=f"Image {meta['img_id']} – GT(green) vs Pred(red)"
                         )
                     )
 
