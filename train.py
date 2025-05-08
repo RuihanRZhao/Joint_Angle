@@ -64,41 +64,43 @@ def evaluate(model, val_loader, device, epoch):
 
             heat_pred, paf_pred, result , pred_ann_list = model(imgs, img_metas)
 
-            for i in result:
-                results.append(i)
+            results.extend(result)
 
-            # 可视化 GT(green) vs Pred(red)
-            if img_id in viz_ids:
-                img_info = coco_gt.loadImgs([img_id])[0]
-                img_path = os.path.join(
-                    val_loader.dataset.root,
-                    val_loader.dataset.img_folder,
-                    img_info['file_name']
-                )
+            for id in img_ids:
 
-                orig_img = cv2.imread(img_path)
-                if orig_img is None:
-                    orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
-
-                h, w = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
-                # 先画 GT
-                vis_img = visualize_coco_keypoints(orig_img, gt_anns, COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
-
-                # 再画 Pred
-                pred_anns = (result['pred_anns'] for result in pred_ann_list if result.get('img_id') == img_id)
-
-                print(pred_anns)
-
-                vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
-
-
-                rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)  # numpy array, H×W×3, uint8
-                vis_list.append(
-                    wandb.Image(
-                        rgb,
-                        caption=f"IMG {img_id}: GT(green) vs Pred(red)"
+                img_id = id.item()
+                # 可视化 GT(green) vs Pred(red)
+                if img_id in viz_ids:
+                    img_info = coco_gt.loadImgs([img_id])[0]
+                    img_path = os.path.join(
+                        val_loader.dataset.root,
+                        val_loader.dataset.img_folder,
+                        img_info['file_name']
                     )
-                )
+
+                    orig_img = cv2.imread(img_path)
+                    if orig_img is None:
+                        orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
+
+                    h, w = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
+                    # 先画 GT
+                    vis_img = visualize_coco_keypoints(orig_img, gt_anns, COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
+
+                    # 再画 Pred
+                    pred_anns = (result['pred_anns'] for result in pred_ann_list if result.get('img_id') == img_id)
+
+                    print(pred_anns)
+
+                    vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
+
+
+                    rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)  # numpy array, H×W×3, uint8
+                    vis_list.append(
+                        wandb.Image(
+                            rgb,
+                            caption=f"IMG {img_id}: GT(green) vs Pred(red)"
+                        )
+                    )
 
 
     # 6. 运行 COCOeval 并返回指标
@@ -286,9 +288,9 @@ if __name__ == '__main__':
         }, step=epoch)
 
         print(f"[Epoch {epoch}/{args.epochs}] "
-              f"Train Loss: {train_loss:.4f}  "
-              f"mAP: {mean_ap:.4f}  AP50: {ap50:.4f}  "
-              f"Time: {elapsed:.1f}s")
+              f"Train Loss: {train_loss:.6f}  "
+              f"mAP: {mean_ap:.6f}  AP50: {ap50:.6f}  "
+              f"Time: {elapsed:.3f}s")
 
         # 保存最佳模型
         if mean_ap > best_ap:
