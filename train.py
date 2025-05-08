@@ -39,6 +39,7 @@ def evaluate(model, val_loader, device, epoch):
     # 随机选取 n_vis 张图做可视化
     n_vis = getattr(wandb.config, 'n_vis', 3)
     viz_ids = random.sample(val_loader.dataset.img_ids, min(n_vis, len(val_loader.dataset.img_ids)))
+    print(viz_ids[1])
 
     with torch.no_grad():
         for imgs, _, _, img_ids  in tqdm(val_loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Evaluating", unit="batch", leave=False, total=len(val_loader)):
@@ -66,10 +67,10 @@ def evaluate(model, val_loader, device, epoch):
 
             results.extend(result)
 
+            # 可视化 GT(green) vs Pred(red)
             for id in img_ids:
 
                 img_id = id.item()
-                # 可视化 GT(green) vs Pred(red)
                 if img_id in viz_ids:
                     img_info = coco_gt.loadImgs([img_id])[0]
                     img_path = os.path.join(
@@ -89,8 +90,6 @@ def evaluate(model, val_loader, device, epoch):
                     # 再画 Pred
                     pred_anns = (result['pred_anns'] for result in pred_ann_list if result.get('img_id') == img_id)
 
-                    print(pred_anns)
-
                     vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
 
 
@@ -106,7 +105,7 @@ def evaluate(model, val_loader, device, epoch):
     # 6. 运行 COCOeval 并返回指标
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, iouType='keypoints')
-    coco_eval.params.imgIds = img_ids
+    coco_eval.params.imgIds = val_loader.dataset.img_ids
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()
@@ -252,7 +251,7 @@ if __name__ == '__main__':
         pin_memory=True
     )
 
-    early_stopper = EarlyStopping(patience=10, min_delta=0.0001)
+    early_stopper = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
 
     print(f"-----------CONFIG----------------")
     for name, value in vars(args).items():
