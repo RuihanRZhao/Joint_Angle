@@ -47,8 +47,8 @@ def evaluate(model, val_loader, device, epoch):
             img_metas: List[Dict] = []
 
             # ready for eval
-            for img_id in img_ids:
-
+            for id in img_ids:
+                img_id = id.item()
                 th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
                 gt_anns = coco_gt.loadAnns(
                     coco_gt.getAnnIds(imgIds=[img_id.item()], catIds=[1], iscrowd=None)
@@ -67,10 +67,9 @@ def evaluate(model, val_loader, device, epoch):
             for i in result:
                 results.append(i)
 
-        for meta in img_metas:
             # 可视化 GT(green) vs Pred(red)
-            if meta['img_id'] in viz_ids:
-                img_info = coco_gt.loadImgs([meta['img_id']])[0]
+            if img_id in viz_ids:
+                img_info = coco_gt.loadImgs([img_id])[0]
                 img_path = os.path.join(
                     val_loader.dataset.root,
                     val_loader.dataset.img_folder,
@@ -81,12 +80,12 @@ def evaluate(model, val_loader, device, epoch):
                 if orig_img is None:
                     orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
 
-                h, w = meta['orig_h'], meta['orig_w']
+                h, w = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
                 # 先画 GT
-                vis_img = visualize_coco_keypoints(orig_img, meta['gt_anns'], COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
+                vis_img = visualize_coco_keypoints(orig_img, gt_anns, COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
 
                 # 再画 Pred
-                pred_anns = (result['pred_anns'] for result in pred_ann_list if result.get('img_id') == meta['img_id'])
+                pred_anns = (result['pred_anns'] for result in pred_ann_list if result.get('img_id') == img_id)
 
                 print(pred_anns)
 
@@ -97,7 +96,7 @@ def evaluate(model, val_loader, device, epoch):
                 vis_list.append(
                     wandb.Image(
                         rgb,
-                        caption=f"IMG {meta['img_id']}: GT(green) vs Pred(red)"
+                        caption=f"IMG {img_id}: GT(green) vs Pred(red)"
                     )
                 )
 
