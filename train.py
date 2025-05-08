@@ -39,7 +39,6 @@ def evaluate(model, val_loader, device, epoch):
     # 随机选取 n_vis 张图做可视化
     n_vis = getattr(wandb.config, 'n_vis', 3)
     viz_ids = random.sample(val_loader.dataset.img_ids, min(n_vis, len(val_loader.dataset.img_ids)))
-    idx_offset = 0
 
     with torch.no_grad():
         for imgs, _, _, img_ids  in tqdm(val_loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Evaluating", unit="batch", leave=False, total=len(val_loader)):
@@ -49,7 +48,6 @@ def evaluate(model, val_loader, device, epoch):
 
             # ready for eval
             for img_id in img_ids:
-
 
                 th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
                 gt_anns = coco_gt.loadAnns(
@@ -69,39 +67,40 @@ def evaluate(model, val_loader, device, epoch):
             for i in result:
                 results.append(i)
 
+        for meta in img_metas:
+            # 可视化 GT(green) vs Pred(red)
+            if meta['img_id'] in viz_ids:
+                img_info = coco_gt.loadImgs([meta['img_id']])[0]
+                img_path = os.path.join(
+                    val_loader.dataset.root,
+                    val_loader.dataset.img_folder,
+                    img_info['file_name']
+                )
 
-            for meta in img_metas:
-                # 可视化 GT(green) vs Pred(red)
-                if meta['img_id'] in viz_ids:
-                    img_info = coco_gt.loadImgs([meta['img_id']])[0]
-                    img_path = os.path.join(
-                        val_loader.dataset.root,
-                        val_loader.dataset.img_folder,
-                        img_info['file_name']
+                orig_img = cv2.imread(img_path)
+                if orig_img is None:
+                    orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
+
+                h, w = meta['orig_h'], meta['orig_w']
+                # 先画 GT
+                vis_img = visualize_coco_keypoints(orig_img, meta['gt_anns'], COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
+
+                # 再画 Pred
+                pred_anns = (result for result in pred_ann_list if result.get('img_id') == meta['img_id'])
+
+                print(pred_anns)
+
+                vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
+
+
+                rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)  # numpy array, H×W×3, uint8
+                vis_list.append(
+                    wandb.Image(
+                        rgb,
+                        caption=f"IMG {meta['img_id']}: GT(green) vs Pred(red)"
                     )
+                )
 
-                    orig_img = cv2.imread(img_path)
-                    if orig_img is None:
-                        orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
-
-                    h, w = meta['orig_h'], meta['orig_w']
-                    # 先画 GT
-                    vis_img = visualize_coco_keypoints(orig_img, meta['gt_anns'], COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
-
-                    # 再画 Pred
-                    pred_anns = (result for result in pred_ann_list if result.get('img_id') == meta['img_id'])
-
-                    vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
-
-                    rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)  # numpy array, H×W×3, uint8
-                    vis_list.append(
-                        wandb.Image(
-                            rgb,
-                            caption=f"IMG {meta['img_id']}: GT(green) vs Pred(red)"
-                        )
-                    )
-
-            idx_offset += heat_pred.shape[0]
 
 
     # 6. 运行 COCOeval 并返回指标
