@@ -150,26 +150,25 @@ class PostProcess(nn.Module):
                 })
 
             # prepare visualization annotations
-            if if_viz:
-                pred_anns = []
-                for p in persons:
-                    kplist = []
-                    num_kp = 0
-                    for k in range(K):
-                        if k in p:
-                            x, y, sc = all_peaks[k][p[k]]
-                            x *= orig_w / W;
-                            y *= orig_h / H
-                            v = 2 if sc > 0 else 0;
-                            num_kp += 1
-                        else:
-                            x = y = v = 0.0
-                        kplist += [x, y, v]
-                    pred_anns.append({'keypoints': kplist, 'num_keypoints': num_kp})
+            pred_anns = []
+            for p in persons:
+                kplist = []
+                num_kp = 0
+                for k in range(K):
+                    if k in p:
+                        x, y, sc = all_peaks[k][p[k]]
+                        x *= orig_w / W;
+                        y *= orig_h / H
+                        v = 2 if sc > 0 else 0;
+                        num_kp += 1
+                    else:
+                        x = y = v = 0.0
+                    kplist += [x, y, v]
+                pred_anns.append({'keypoints': kplist, 'num_keypoints': num_kp})
 
                 pred_ann_list.append({'image_id': img_id, 'pred_anns': pred_anns})
 
-                print(pred_ann_list)
+
 
 
         return results, pred_ann_list
