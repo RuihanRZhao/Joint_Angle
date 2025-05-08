@@ -18,7 +18,7 @@ from models.Multi_Pose import MultiPoseNet
 from utils.visualization import visualize_coco_keypoints
 from utils.loss import PoseLoss
 from utils.coco import COCOPoseDataset, COCO_PERSON_SKELETON
-
+from utils.PostProcess import postprocess
 
 NUM_KP=17
 # -----------------------
@@ -35,40 +35,41 @@ def evaluate(model, val_loader, device, epoch):
     img_ids = []
     vis_list = []
     results = []
+    idx_offset = 0
 
     # 随机选取 n_vis 张图做可视化
     n_vis = getattr(wandb.config, 'n_vis', 3)
     viz_ids = random.sample(val_loader.dataset.img_ids, min(n_vis, len(val_loader.dataset.img_ids)))
 
     with torch.no_grad():
-        for imgs, _, _, img_ids  in tqdm(val_loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Evaluating", unit="batch", leave=False, total=len(val_loader)):
+        for imgs, _, _ in val_loader:
             imgs = imgs.to(device)
+            output = model(imgs)
+            # 兼容可能的多输出（refine 或单阶段）
+            if isinstance(output, (tuple, list)):
+                if len(output) == 4:
+                    heat_pred, paf_pred = output[0], output[1]
+                elif len(output) == 2:
+                    heat_pred, paf_pred = output
+                else:
+                    raise ValueError(f"evaluate: unexpected model output length {len(output)}")
+            else:
+                heat_pred, paf_pred = output, None
 
-            img_metas: List[Dict] = []
+            B, H, W = heat_pred.shape[0], heat_pred.shape[2], heat_pred.shape[3]
 
-            # ready for eval
-            for id in img_ids:
-                img_id = id.item()
-                th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
-                gt_anns = coco_gt.loadAnns(
-                    coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
-                )
+            for i in range(B):
+                img_id = val_loader.dataset.img_ids[idx_offset + i]
+                img_ids.append(img_id)
 
-                img_metas.append({
-                    'img_id': img_id,
-                    'if_viz': img_id in viz_ids,
-                    'orig_h': th,
-                    'orig_w': tw,
-                    'gt_anns': gt_anns,
-                })
+                heat = heat_pred[i].cpu().numpy()       # shape: [K, H, W]
+                paf = paf_pred[i].cpu().numpy() if paf_pred is not None else None
 
-            heat_pred, paf_pred, result , pred_ann_list = model(imgs, img_metas)
+                persons, part_results, all_peaks, orig = postprocess(heat, paf, H, W, img_id, coco_gt)
 
-            results.extend(result)
+                results.extend(part_results)
 
-            # 可视化 GT(green) vs Pred(red)
-            for id in img_ids:
-                img_id = id.item()
+                # 5. 可视化 GT(green) vs Pred(red)
                 if img_id in viz_ids:
                     img_info = coco_gt.loadImgs([img_id])[0]
                     img_path = os.path.join(
@@ -76,39 +77,50 @@ def evaluate(model, val_loader, device, epoch):
                         val_loader.dataset.img_folder,
                         img_info['file_name']
                     )
-
                     orig_img = cv2.imread(img_path)
-
                     if orig_img is None:
                         orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
+                    tw, th = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
 
-                    h, w = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
-
+                    # 先画 GT
                     gt_anns = coco_gt.loadAnns(
                         coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
                     )
-                    # 先画 GT
-                    vis_img = visualize_coco_keypoints(orig_img, gt_anns, COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
+                    vis_img = visualize_coco_keypoints(orig_img, gt_anns, COCO_PERSON_SKELETON,(tw, th),(0, 255, 0),(0, 255, 0))
 
                     # 再画 Pred
-                    pred_anns = (result['pred_anns'] for result in pred_ann_list if result.get('img_id') == img_id)
+                    pred_anns = []
+                    for p in persons:
+                        kplist = []
+                        num_kp = 0
+                        for k in range(len(all_peaks)):
+                            if k in p:
+                                x, y, sc = all_peaks[k][p[k]]
+                                x *= (orig['width'] / W)
+                                y *= (orig['height'] / H)
+                                v = 2 if sc > 0 else 0
+                                num_kp += 1
+                            else:
+                                x, y, v = 0.0, 0.0, 0
+                            kplist.extend([x, y, v])
+                        pred_anns.append({'keypoints': kplist, 'num_keypoints': num_kp})
 
-                    vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(h, w),(0, 0, 255), (0, 0, 255))
-
+                    vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,(tw, th),(0, 0, 255), (0, 0, 255))
 
                     rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)  # numpy array, H×W×3, uint8
                     vis_list.append(
                         wandb.Image(
                             rgb,
-                            caption=f"IMG {img_id}: GT(green) vs Pred(red)"
+                            caption=f"IMG {img_id}: GT(g) vs Pred(r)"
                         )
                     )
 
+            idx_offset += B
 
     # 6. 运行 COCOeval 并返回指标
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, iouType='keypoints')
-    coco_eval.params.imgIds = val_loader.dataset.img_ids
+    coco_eval.params.imgIds = img_ids
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()

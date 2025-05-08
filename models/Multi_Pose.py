@@ -5,7 +5,6 @@ import math
 import wandb
 from typing import Tuple, List
 
-from .PostProcess import PostProcess
 
 COCO_PERSON_SKELETON: List[Tuple[int, int]] = [
     (15, 13), (13, 11), (16, 14), (14, 12),
@@ -173,12 +172,6 @@ class MultiPoseNet(nn.Module):
             self.refine_paf     = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
             self.relu = nn.ReLU(inplace=True)
 
-        self.postprocess = PostProcess(
-            peak_thresh=0.1,
-            paf_score_thresh=0.05,
-            paf_count_thresh=0.8
-        )
-
     def forward(self, x, img_metas=None):
         # 1. 骨干特征提取 (多尺度)
         feat2, feat3, feat5, feat7 = self.backbone(x)
@@ -210,8 +203,7 @@ class MultiPoseNet(nn.Module):
         # 返回 (精细化热图, 精细化PAF)
 
         if img_metas is not None:
-            results, pred_ann_list = self.postprocess(refined_heatmap, refined_paf, img_metas)
-            return refined_heatmap, refined_paf, results, pred_ann_list
+            return refined_heatmap, refined_paf
 
 
         return refined_heatmap, refined_paf
