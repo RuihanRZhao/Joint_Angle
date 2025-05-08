@@ -56,8 +56,6 @@ def evaluate(model, val_loader, device, epoch):
                     coco_gt.getAnnIds(imgIds=[img_id.item()], catIds=[1], iscrowd=None)
                 )
 
-                print(gt_anns)
-
                 img_metas.append({
                     'img_id': img_id.item(),
                     'if_viz': img_id in viz_ids,
@@ -75,9 +73,6 @@ def evaluate(model, val_loader, device, epoch):
             for meta in img_metas:
                 # 可视化 GT(green) vs Pred(red)
                 if meta['img_id'] in viz_ids:
-
-                    print(meta)
-
                     img_info = coco_gt.loadImgs([meta['img_id']])[0]
                     img_path = os.path.join(
                         val_loader.dataset.root,
