@@ -51,11 +51,11 @@ def evaluate(model, val_loader, device, epoch):
                 img_id = id.item()
                 th, tw = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
                 gt_anns = coco_gt.loadAnns(
-                    coco_gt.getAnnIds(imgIds=[img_id.item()], catIds=[1], iscrowd=None)
+                    coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
                 )
 
                 img_metas.append({
-                    'img_id': img_id.item(),
+                    'img_id': img_id,
                     'if_viz': img_id in viz_ids,
                     'orig_h': th,
                     'orig_w': tw,
