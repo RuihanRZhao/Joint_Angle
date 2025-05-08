@@ -39,7 +39,6 @@ def evaluate(model, val_loader, device, epoch):
     # 随机选取 n_vis 张图做可视化
     n_vis = getattr(wandb.config, 'n_vis', 3)
     viz_ids = random.sample(val_loader.dataset.img_ids, min(n_vis, len(val_loader.dataset.img_ids)))
-    print(viz_ids[1])
 
     with torch.no_grad():
         for imgs, _, _, img_ids  in tqdm(val_loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Evaluating", unit="batch", leave=False, total=len(val_loader)):
@@ -69,7 +68,6 @@ def evaluate(model, val_loader, device, epoch):
 
             # 可视化 GT(green) vs Pred(red)
             for id in img_ids:
-
                 img_id = id.item()
                 if img_id in viz_ids:
                     img_info = coco_gt.loadImgs([img_id])[0]
@@ -80,10 +78,15 @@ def evaluate(model, val_loader, device, epoch):
                     )
 
                     orig_img = cv2.imread(img_path)
+
                     if orig_img is None:
                         orig_img = np.zeros((img_info['height'], img_info['width'], 3), dtype=np.uint8)
 
                     h, w = val_loader.dataset.img_size[1], val_loader.dataset.img_size[0]
+
+                    gt_anns = coco_gt.loadAnns(
+                        coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
+                    )
                     # 先画 GT
                     vis_img = visualize_coco_keypoints(orig_img, gt_anns, COCO_PERSON_SKELETON,(h, w),(0, 255, 0),(0, 255, 0))
 
