@@ -137,7 +137,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch):
     model.train()
     epoch_loss = 0.0
 
-    for batch_idx, (imgs, heatmaps, pafs, _) in enumerate(tqdm(loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Training", leave=False)):
+    for batch_idx, (imgs, heatmaps, pafs) in enumerate(tqdm(loader, desc=f"Epoch: {epoch[0]}/{epoch[1]} Training", leave=False)):
         imgs = imgs.to(device)
         heatmaps = heatmaps.to(device)
         pafs = pafs.to(device)
