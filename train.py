@@ -102,7 +102,6 @@ def evaluate(model, val_loader, device, epoch):
                 )
 
 
-
     # 6. 运行 COCOeval 并返回指标
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, iouType='keypoints')
@@ -236,7 +235,6 @@ if __name__ == '__main__':
         sigma=args.sigma,
         augment=False
     )
-    print()
 
     train_loader = DataLoader(
         train_ds,
