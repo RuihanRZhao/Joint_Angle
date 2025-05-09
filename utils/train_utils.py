@@ -1,5 +1,5 @@
 import torch
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import torch.nn.utils as torch_utils
 import copy
 import wandb
@@ -21,7 +21,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_amp=False, 
       avg_loss: 当前epoch的平均损失值。
     """
     model.train()
-    scaler = GradScaler(enabled=use_amp)  # GradScaler在use_amp=True时启用
+    scaler = GradScaler('cuda', enabled=use_amp)  # GradScaler在use_amp=True时启用
     epoch_loss = 0.0
     num_samples = 0
     # 遍历训练集

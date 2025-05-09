@@ -78,7 +78,7 @@ class COCOPoseDataset(Dataset):
         all_ids = list(self.coco.imgs.keys())
         self.img_ids = [
             img_id for img_id in all_ids
-            if len(self.coco.getAnnIds(imgIds=img_id, iscrowd=False,catIds=[1])) > 0
+            if len(self.coco.getAnnIds(imgIds=img_id, iscrowd=False, catIds=[1])) > 0
         ]
         # 空集检查
         if len(self.img_ids) == 0:
@@ -110,7 +110,7 @@ class COCOPoseDataset(Dataset):
         img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
 
         # 加载标注
-        ann_ids = self.coco.getAnnIds(imgIds=img_id, iscrowd=False, category_id=1)
+        ann_ids = self.coco.getAnnIds(imgIds=img_id, iscrowd=False, catIds=[1])
         anns = self.coco.loadAnns(ann_ids)
         n_person = len(anns)
 
