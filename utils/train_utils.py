@@ -70,8 +70,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_amp=False, 
         batch_size = imgs.size(0)
         epoch_loss += loss.item() * batch_size
         num_samples += batch_size
-    avg_loss = epoch_loss / num_samples if num_samples > 0 else 0.0
-    return avg_loss
+    return epoch_loss
 
 class ModelEMA:
     """
