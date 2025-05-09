@@ -93,7 +93,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MultiPoseNet(num_keypoints=17, refine=True)  # 假设PoseModel使用MobileNetV2骨干
     model.to(device)
-    criterion = PoseLoss(ohkm_k=0, struct_weight=struct_weight)
+    criterion = PoseLoss(ohkm_k=0, struct_weight=0)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     # 使用OneCycleLR学习率调度替代StepLR
     scheduler = build_onecycle_scheduler(optimizer, train_loader, epochs, learning_rate)
@@ -106,11 +106,13 @@ if __name__ == "__main__":
     best_ap = 0.0
     # 训练循环
     for epoch in range(epochs):
-        if epoch == 50:
+        if best_ap >= 0.1:
             criterion.ohkm_k = ohkm_k
 
         if best_ap >= 0.5:
             criterion.struct_weight = 0.1
+
+
 
         # 单个epoch训练
         avg_loss = train_one_epoch(
