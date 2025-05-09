@@ -191,7 +191,7 @@ def evaluate(model, val_loader, device, vis_ids=None):
                     gt_anns = coco_gt.loadAnns(gt_ann_ids)
                     vis_img = visualize_coco_keypoints(vis_img, gt_anns, COCO_PERSON_SKELETON,
                                                        output_size=val_loader.dataset.img_size,
-                                                       point_color=(0, 0, 255), line_color=(0, 0, 255))
+                                                       point_color=(0, 255, 0), line_color=(0, 255, 0))
                     # 绘制预测关键点（红色）
                     pred_anns = []
                     for person in persons:
