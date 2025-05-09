@@ -60,6 +60,7 @@ class COCOPoseDataset(Dataset):
         """
         super().__init__()
 
+        self.root = root
         # 1) 确保 COCO 数据存在
         ensure_coco_data(root, retries=download_retries, backoff_factor=backoff_factor)
 

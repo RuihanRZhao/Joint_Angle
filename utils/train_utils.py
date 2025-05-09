@@ -3,6 +3,7 @@ from torch.amp import autocast, GradScaler
 import torch.nn.utils as torch_utils
 import copy
 import wandb
+from tqdm import tqdm
 
 def train_one_epoch(model, loader, criterion, optimizer, device, use_amp=False, grad_clip=None, ema=None, scheduler=None):
     """
@@ -25,7 +26,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_amp=False, 
     epoch_loss = 0.0
     num_samples = 0
     # 遍历训练集
-    for imgs, heatmaps, pafs, _ in loader:
+    for imgs, heatmaps, pafs, _ in tqdm(loader, desc="Training", unit="batch", leave=True):
         imgs = imgs.to(device, non_blocking=True)
         heatmaps = heatmaps.to(device, non_blocking=True)
         pafs = pafs.to(device, non_blocking=True)
