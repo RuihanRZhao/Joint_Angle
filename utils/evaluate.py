@@ -40,7 +40,7 @@ def evaluate(model, val_loader, device, vis_ids=None):
         vis_set = set(random.sample(val_loader.dataset.img_ids, min(n_vis, len(val_loader.dataset.img_ids))))
     idx_offset = 0
     with torch.no_grad():
-        for batch_idx, (imgs, _, _, _) in enumerate(tqdm(val_loader, desc="Evaluating", unit="batch")):
+        for batch_idx, (imgs, _, _, _, _, _, _) in enumerate(tqdm(val_loader, desc="Evaluating", unit="batch")):
             imgs = imgs.to(device)
             # 模型预测
             #   兼容不同输出格式（支持精细化输出）
