@@ -128,9 +128,9 @@ if __name__ == "__main__":
         # 保存当前最佳模型权重
         if mean_ap > best_ap:
             best_ap = mean_ap
-            torch.save(model.state_dict(), f"{data_root}/models/best_model_ep{epoch + 1}.pth")
+            torch.save(model.state_dict(), f"run/models/best_model_ep{epoch + 1}.pth")
             if ema is not None:
-                torch.save(ema.ema_model.state_dict(), f"{data_root}/models/best_model_ema_ep{epoch + 1}.pth")
+                torch.save(ema.ema_model.state_dict(), f"run/models/best_model_ema_ep{epoch + 1}.pth")
         print(f"Epoch {epoch+1}/{config.epochs} - Loss: {avg_loss:.12f} | mAP: {mean_ap:.12f} | AP50: {ap50:.12f}")
 
     # 保存最后一轮模型权重
