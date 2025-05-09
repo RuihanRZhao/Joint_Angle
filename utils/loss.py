@@ -31,13 +31,13 @@ class PoseLoss(nn.Module):
         返回:
          total_loss: 总损失张量 (标量)
         """
-
+        device = outputs[0].device if isinstance(outputs, (list, tuple)) else outputs.device
 
         # 解包真值
-        heatmap_gt = targets['heatmap']
-        paf_gt = targets['paf']
-        heatmap_weight = targets['heatmap_weight']
-        paf_weight = targets['paf_weight']
+        heatmap_gt = targets['heatmap'].to(device)
+        paf_gt = targets['paf'].to(device)
+        heatmap_weight = targets['heatmap_weight'].to(device)
+        paf_weight = targets['paf_weight'].to(device)
 
         total_loss = 0.0
         # 模型输出可能为 tuple/list 或 tensor
