@@ -115,8 +115,8 @@ class COCOPoseDataset(Dataset):
         n_person = len(anns)
 
         # 生成热图和 PAF
-        hm_tensor = generate_heatmap(anns, self.hm_size, self.sigma)
-        paf_tensor = generate_paf(anns, self.hm_size, COCO_PERSON_SKELETON, self.paf_thickness)
+        hm_tensor = generate_heatmap(anns, self.img_size, self.hm_size, self.sigma)
+        paf_tensor = generate_paf(anns, self.img_size, self.hm_size, COCO_PERSON_SKELETON, self.paf_thickness)
 
         return img_tensor, hm_tensor, paf_tensor, n_person
 
