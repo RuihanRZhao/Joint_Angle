@@ -9,8 +9,8 @@ hm_w: 128
 sigma: 2
 ohkm_k: 8
 n_vis: 6
-num_workers_train: 16
-num_workers_val: 8
+num_workers_train: 24
+num_workers_val: 16
 grad_clip: 5.0
 seed: 42
 use_amp: True
