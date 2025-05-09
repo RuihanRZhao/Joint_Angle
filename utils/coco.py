@@ -123,22 +123,19 @@ class COCOPoseDataset(Dataset):
         H_hm, W_hm = self.hm_size
 
         # 构造 joint_coords_gt: [n_person, 17, 3] (x, y, v)，在 heatmap 尺度下
-        joint_coords = []
-        for ann in anns:
-            kp = np.array(ann['keypoints'], dtype=np.float32).reshape(-1, 3)  # [17, 3]
+        max_person = 10  # 可调整：图中最多支持多少人
+        joint_coords = np.zeros((max_person, NUM_KP, 3), dtype=np.float32)
+
+        for i, ann in enumerate(anns[:max_person]):  # 最多保留 max_person 人
+            kp = np.array(ann['keypoints'], dtype=np.float32).reshape(-1, 3)
             coords = np.zeros((NUM_KP, 3), dtype=np.float32)
-            for i, (x, y, v) in enumerate(kp):
-                coords[i, 0] = x * W_hm / W
-                coords[i, 1] = y * H_hm / H
-                coords[i, 2] = v
-            joint_coords.append(coords)
+            for j, (x, y, v) in enumerate(kp):
+                coords[j, 0] = x * W_hm / W  # 缩放到 heatmap 尺度
+                coords[j, 1] = y * H_hm / H
+                coords[j, 2] = v
+            joint_coords[i] = coords
 
-        if len(joint_coords) > 0:
-            joint_coords = np.stack(joint_coords, axis=0)  # [n_person, 17, 3]
-        else:
-            joint_coords = np.zeros((0, NUM_KP, 3), dtype=np.float32)
-
-        joint_coords = torch.from_numpy(joint_coords)  # 转为 tensor
+        joint_coords = torch.from_numpy(joint_coords)
 
         return img_tensor, hm_tensor, paf_tensor, hm_weights, paf_weights, joint_coords, n_person
 
