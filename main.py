@@ -81,30 +81,30 @@ if __name__ == "__main__":
         input_size=(img_h, img_w),
         hm_size=(hm_h, hm_w)
     )
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=num_workers_train, prefetch_factor=2)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=num_workers_val, prefetch_factor=2)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers_train, prefetch_factor=2)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers_val, prefetch_factor=2)
 
     # 初始化模型、损失函数、优化器等
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MultiPoseNet(num_keypoints=17, refine=True)  # 假设PoseModel使用MobileNetV2骨干
     model.to(device)
-    criterion = PoseLoss(ohkm_k=config.ohkm_k, struct_weight=config.struct_weight)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    criterion = PoseLoss(ohkm_k=ohkm_k, struct_weight=struct_weight)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     # 使用OneCycleLR学习率调度替代StepLR
-    scheduler = build_onecycle_scheduler(optimizer, train_loader, config.epochs, config.learning_rate)
+    scheduler = build_onecycle_scheduler(optimizer, train_loader, epochs, learning_rate)
     # 初始化EMA模型
-    ema = ModelEMA(model, decay=0.999) if config.use_ema else None
+    ema = ModelEMA(model, decay=0.999) if use_ema else None
 
     # 监视模型参数和梯度（WandB）
     wandb.watch(model, log="all", log_freq=100)
 
     best_ap = 0.0
     # 训练循环
-    for epoch in range(config.epochs):
+    for epoch in range(epochs):
         # 单个epoch训练
         avg_loss = train_one_epoch(
             model, train_loader, criterion, optimizer, device,
-            use_amp=config.use_amp, grad_clip=config.grad_clip,
+            use_amp=use_amp, grad_clip=grad_clip,
             ema=ema, scheduler=scheduler
         )
         # 使用EMA模型进行评估（如果启用EMA）以获得平滑的验证结果
