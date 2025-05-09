@@ -8,7 +8,7 @@ hm_h: 64
 hm_w: 64
 sigma: 2
 ohkm_k: 8
-n_vis: 3
+n_vis: 6
 num_workers_train: 16
 num_workers_val: 8
 grad_clip: 5.0

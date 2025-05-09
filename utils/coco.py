@@ -116,10 +116,10 @@ class COCOPoseDataset(Dataset):
         n_person = len(anns)
 
         # 生成热图和 PAF
-        hm_tensor = generate_heatmap(anns, self.img_size, self.hm_size, self.sigma)
-        paf_tensor = generate_paf(anns, self.img_size, self.hm_size, COCO_PERSON_SKELETON, self.paf_thickness)
+        hm_tensor, hm_weights = generate_heatmap(anns, self.img_size, self.hm_size, self.sigma)
+        paf_tensor, paf_weights = generate_paf(anns, self.img_size, self.hm_size, COCO_PERSON_SKELETON, self.paf_thickness)
 
-        return img_tensor, hm_tensor, paf_tensor, n_person
+        return img_tensor, hm_tensor, paf_tensor, hm_weights, paf_weights, n_person
 
 
 
@@ -260,23 +260,19 @@ def generate_heatmap(anns, input_size, hm_size, sigma):
                          gaussian[g_y0:g_y1, g_x0:g_x1]
                      )
 
-    return torch.from_numpy(heatmaps)
+    weight_mask = np.full_like(heatmaps, 0.1, dtype=np.float32)
+    for j in range(num_keypoints):
+        if heatmaps[j].max() == 0:
+            # 该通道无任何关键点标注
+            weight_mask[j] = 0.0  # 整个通道权重设为0（忽略此通道损失）
+        else:
+            # 将热图中有关键点的像素位置赋予权重1
+            weight_mask[j][heatmaps[j] > 0] = 1.0
+
+    return torch.from_numpy(heatmaps), torch.from_numpy(weight_mask)
 
 
 def generate_paf(anns, input_size, hm_size, skeleton, paf_thickness):
-    """
-    生成部件亲和场 (PAF)。
-
-    Args:
-        anns (list): COCO 注释列表，每个 ann 包含 'keypoints'
-        input_size (tuple): 输入图像大小 (H, W)
-        hm_size (tuple): PAF 输出大小 (H_hm, W_hm)
-        skeleton (list of [int, int]): 骨架连接点索引对（COCO 索引从 1 开始）
-        paf_thickness (float): PAF 半宽度（像素）
-
-    Returns:
-        torch.FloatTensor: 形状 [2*C, H_hm, W_hm] 的 PAF 张量
-    """
     H, W = input_size
     hm_H, hm_W = hm_size
     num_limbs = len(skeleton)
@@ -286,12 +282,11 @@ def generate_paf(anns, input_size, hm_size, skeleton, paf_thickness):
     for ann in anns:
         kp = ann['keypoints']
         for idx, (p1, p2) in enumerate(skeleton):
-            x1, y1, v1 = kp[(p1-1)*3], kp[(p1-1)*3+1], kp[(p1-1)*3+2]
-            x2, y2, v2 = kp[(p2-1)*3], kp[(p2-1)*3+1], kp[(p2-1)*3+2]
+            x1, y1, v1 = kp[(p1 - 1) * 3], kp[(p1 - 1) * 3 + 1], kp[(p1 - 1) * 3 + 2]
+            x2, y2, v2 = kp[(p2 - 1) * 3], kp[(p2 - 1) * 3 + 1], kp[(p2 - 1) * 3 + 2]
             if v1 <= 0 or v2 <= 0:
                 continue
 
-            # 映射到 PAF 分辨率
             x1_hm = x1 * hm_W / W
             y1_hm = y1 * hm_H / H
             x2_hm = x2 * hm_W / W
@@ -303,7 +298,6 @@ def generate_paf(anns, input_size, hm_size, skeleton, paf_thickness):
                 continue
             vx, vy = dx / norm, dy / norm
 
-            # 搜索区域
             min_x = int(max(min(x1_hm, x2_hm) - paf_thickness, 0))
             max_x = int(min(max(x1_hm, x2_hm) + paf_thickness, hm_W))
             min_y = int(max(min(y1_hm, y2_hm) - paf_thickness, 0))
@@ -318,14 +312,25 @@ def generate_paf(anns, input_size, hm_size, skeleton, paf_thickness):
                     perp_dist = abs(-vy * rx + vx * ry)
                     if perp_dist > paf_thickness:
                         continue
-                    pafs[2*idx, y, x] += vx
-                    pafs[2*idx+1, y, x] += vy
+                    pafs[2 * idx, y, x] += vx
+                    pafs[2 * idx + 1, y, x] += vy
                     count[idx, y, x] += 1
 
     # 平均化向量
     for idx in range(num_limbs):
         mask = count[idx] > 0
-        pafs[2*idx][mask] /= count[idx][mask]
-        pafs[2*idx+1][mask] /= count[idx][mask]
+        pafs[2 * idx][mask] /= count[idx][mask]
+        pafs[2 * idx + 1][mask] /= count[idx][mask]
 
-    return torch.from_numpy(pafs)
+    # === 新增: 生成 paf 权重图 ===
+    paf_weights = np.full((2 * num_limbs, hm_H, hm_W), 0.1, dtype=np.float32)
+    for idx in range(num_limbs):
+        mask = count[idx] > 0
+        paf_weights[2 * idx][mask] = 1.0
+        paf_weights[2 * idx + 1][mask] = 1.0
+        if np.sum(mask) == 0:
+            # 整个 limb 没有标注，整通道权重设为0
+            paf_weights[2 * idx] = 0.0
+            paf_weights[2 * idx + 1] = 0.0
+
+    return torch.from_numpy(pafs), torch.from_numpy(paf_weights)

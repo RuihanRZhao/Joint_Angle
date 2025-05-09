@@ -34,6 +34,11 @@ class PoseLoss(nn.Module):
 
 
         # 解包真值
+        heatmap_gt = targets['heatmap']
+        paf_gt = targets['paf']
+        heatmap_weight = targets['heatmap_weight']
+        paf_weight = targets['paf_weight']
+
         if isinstance(targets, (tuple, list)):
             if len(targets) == 2:
                 heatmap_gt, paf_gt = targets
@@ -75,9 +80,12 @@ class PoseLoss(nn.Module):
                     loss_heat_refine = torch.stack(ohkm_loss_list).mean()
                 else:
                     # 不使用OHKM，直接对精细化heatmap计算全局平均MSE
-                    loss_heat_refine = F.mse_loss(refined_heatmap, heatmap_gt, reduction='mean')
+                    diff_hm = (refined_heatmap - heatmap_gt) ** 2
+                    loss_heat_refine = (diff_hm * heatmap_weight).mean()
                 # PAF损失：对所有像素取平均
-                loss_paf_refine = F.mse_loss(refined_paf, paf_gt, reduction='mean') if paf_gt is not None else 0.0
+                diff_paf = (refined_paf - paf_gt) ** 2
+
+                loss_paf_refine = (diff_paf * paf_weight).mean() if paf_gt is not None else 0.0
                 # 合并heatmap损失和PAF损失（初始+精细化）
                 weight_bias = 1.0
                 if self.ohkm_k > 0:
