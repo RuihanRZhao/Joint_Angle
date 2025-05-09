@@ -39,18 +39,6 @@ class PoseLoss(nn.Module):
         heatmap_weight = targets['heatmap_weight']
         paf_weight = targets['paf_weight']
 
-        if isinstance(targets, (tuple, list)):
-            if len(targets) == 2:
-                heatmap_gt, paf_gt = targets
-                joint_coords_gt = None
-            elif len(targets) == 3:
-                heatmap_gt, paf_gt, joint_coords_gt = targets
-            else:
-                raise ValueError("targets 应是包含2或3个元素的tuple: (heatmap_gt, paf_gt, [joint_coords_gt])")
-        else:
-            # 若只给定单一真值张量，默认其为heatmap GT，不支持PAF和结构损失
-            heatmap_gt, paf_gt, joint_coords_gt = targets, None, None
-
         total_loss = 0.0
         # 模型输出可能为 tuple/list 或 tensor
         if isinstance(outputs, (tuple, list)):
@@ -59,8 +47,10 @@ class PoseLoss(nn.Module):
                 # refine=True 的情况，outputs = (refined_heatmap, refined_paf, init_heatmap, init_paf)
                 refined_heatmap, refined_paf, init_heatmap, init_paf = outputs
                 # 计算初始阶段的heatmap和paf损失
-                loss_heat_init = F.mse_loss(init_heatmap, heatmap_gt, reduction='mean')
-                loss_paf_init = F.mse_loss(init_paf, paf_gt, reduction='mean') if paf_gt is not None else 0.0
+                diff_hm_i = (init_heatmap - heatmap_gt) ** 2
+                loss_heat_init = (diff_hm_i * heatmap_weight).mean()
+                diff_paf_i = (init_paf - paf_gt) ** 2
+                loss_paf_init = (diff_paf_i * paf_weight).mean() if paf_gt is not None else 0.0
                 # 计算精细化阶段的heatmap和paf损失
                 # 若使用OHKM，则对精细化heatmap损失应用OHKM选择
                 if self.ohkm_k is not None and self.ohkm_k > 0:
@@ -80,12 +70,11 @@ class PoseLoss(nn.Module):
                     loss_heat_refine = torch.stack(ohkm_loss_list).mean()
                 else:
                     # 不使用OHKM，直接对精细化heatmap计算全局平均MSE
-                    diff_hm = (refined_heatmap - heatmap_gt) ** 2
-                    loss_heat_refine = (diff_hm * heatmap_weight).mean()
+                    diff_hm_r = (refined_heatmap - heatmap_gt) ** 2
+                    loss_heat_refine = (diff_hm_r * heatmap_weight).mean()
                 # PAF损失：对所有像素取平均
-                diff_paf = (refined_paf - paf_gt) ** 2
-
-                loss_paf_refine = (diff_paf * paf_weight).mean() if paf_gt is not None else 0.0
+                diff_paf_r = (refined_paf - paf_gt) ** 2
+                loss_paf_refine = (diff_paf_r * paf_weight).mean() if paf_gt is not None else 0.0
                 # 合并heatmap损失和PAF损失（初始+精细化）
                 weight_bias = 1.0
                 if self.ohkm_k > 0:
