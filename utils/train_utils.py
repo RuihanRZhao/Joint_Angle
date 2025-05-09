@@ -26,7 +26,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_amp=False, 
     epoch_loss = 0.0
     num_samples = 0
     # 遍历训练集
-    for images, heatmaps, pafs, heatmap_weights, paf_weights, n_person in tqdm(loader, desc="Training", unit="batch", leave=True):
+    for images, heatmaps, pafs, heatmap_weights, paf_weights, joint_coords, n_person in tqdm(loader, desc="Training", unit="batch", leave=True):
         imgs = images.to(device, non_blocking=True)
         heatmaps = heatmaps.to(device, non_blocking=True)
         pafs = pafs.to(device, non_blocking=True)
@@ -40,7 +40,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_amp=False, 
                 "heatmap": heatmaps,
                 "paf": pafs,
                 "heatmap_weight": heatmap_weights,
-                "paf_weight": paf_weights
+                "paf_weight": paf_weights,
+                "joint_coords": joint_coords,
             }
 
             loss = criterion(outputs, targets)

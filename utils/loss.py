@@ -38,6 +38,7 @@ class PoseLoss(nn.Module):
         paf_gt = targets['paf'].to(device)
         heatmap_weight = targets['heatmap_weight'].to(device)
         paf_weight = targets['paf_weight'].to(device)
+        joint_coords_gt = targets['joint_coords'].to(device)
 
         total_loss = 0.0
         # 模型输出可能为 tuple/list 或 tensor

@@ -119,7 +119,28 @@ class COCOPoseDataset(Dataset):
         hm_tensor, hm_weights = generate_heatmap(anns, self.img_size, self.hm_size, self.sigma)
         paf_tensor, paf_weights = generate_paf(anns, self.img_size, self.hm_size, COCO_PERSON_SKELETON, self.paf_thickness)
 
-        return img_tensor, hm_tensor, paf_tensor, hm_weights, paf_weights, n_person
+        H, W = self.img_size
+        H_hm, W_hm = self.hm_size
+
+        # 构造 joint_coords_gt: [n_person, 17, 3] (x, y, v)，在 heatmap 尺度下
+        joint_coords = []
+        for ann in anns:
+            kp = np.array(ann['keypoints'], dtype=np.float32).reshape(-1, 3)  # [17, 3]
+            coords = np.zeros((NUM_KP, 3), dtype=np.float32)
+            for i, (x, y, v) in enumerate(kp):
+                coords[i, 0] = x * W_hm / W
+                coords[i, 1] = y * H_hm / H
+                coords[i, 2] = v
+            joint_coords.append(coords)
+
+        if len(joint_coords) > 0:
+            joint_coords = np.stack(joint_coords, axis=0)  # [n_person, 17, 3]
+        else:
+            joint_coords = np.zeros((0, NUM_KP, 3), dtype=np.float32)
+
+        joint_coords = torch.from_numpy(joint_coords)  # 转为 tensor
+
+        return img_tensor, hm_tensor, paf_tensor, hm_weights, paf_weights, joint_coords, n_person
 
 
 
