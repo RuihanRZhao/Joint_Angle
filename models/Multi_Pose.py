@@ -4,7 +4,8 @@ import torch.nn.functional as F
 import math
 import wandb
 from typing import Tuple, List
-from torchvision.models import mobilenet_v2
+from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+
 
 
 COCO_PERSON_SKELETON: List[Tuple[int, int]] = [
@@ -50,7 +51,8 @@ class MobileNetV2Backbone(nn.Module):
         super().__init__()
 
         # 加载 torchvision 的 MobileNetV2 backbone
-        backbone = mobilenet_v2(pretrained=pretrained).features
+        weights = MobileNet_V2_Weights.DEFAULT if pretrained else None
+        backbone = mobilenet_v2(weights=weights).features
 
         # 直接引用前17个 block（含 conv1）
         self.conv1  = backbone[0]   # ConvBNReLU
