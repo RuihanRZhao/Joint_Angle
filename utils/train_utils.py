@@ -31,7 +31,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_amp=False, 
         pafs = pafs.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
         # 前向传播（混合精度上下文）
-        with autocast(enabled=use_amp):
+        with autocast('cuda', enabled=use_amp):
 
             outputs = model(imgs)
             loss = criterion(outputs, (heatmaps, pafs))
