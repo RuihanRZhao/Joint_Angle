@@ -185,11 +185,10 @@ def evaluate(model, val_loader, device, vis_ids=None):
                         orig_img = np.zeros((orig_h, orig_w, 3), dtype=np.uint8)
                     # 将原图缩放到网络输入大小用于显示
                     inp_h, inp_w = val_loader.dataset.img_size  # 网络输入尺寸 (h, w)
-                    vis_img = cv2.resize(orig_img, (inp_w, inp_h))
                     # 绘制GT关键点（绿色）
                     gt_ann_ids = coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
                     gt_anns = coco_gt.loadAnns(gt_ann_ids)
-                    vis_img = visualize_coco_keypoints(vis_img, gt_anns, COCO_PERSON_SKELETON,
+                    vis_img = visualize_coco_keypoints(orig_img, gt_anns, COCO_PERSON_SKELETON,
                                                        output_size=val_loader.dataset.img_size,
                                                        point_color=(0, 255, 0), line_color=(0, 255, 0))
                     # 绘制预测关键点（红色）
@@ -209,9 +208,12 @@ def evaluate(model, val_loader, device, vis_ids=None):
                                 x_disp, y_disp, v = 0.0, 0.0, 0
                             kp_list.extend([float(x_disp), float(y_disp), float(v)])
                         pred_anns.append({'keypoints': kp_list, 'num_keypoints': num_visible})
-                    vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,
-                                                       output_size=val_loader.dataset.img_size,
-                                                       point_color=(0, 0, 255), line_color=(0, 0, 255))
+                    vis_img = visualize_coco_keypoints(
+                        vis_img, pred_anns, COCO_PERSON_SKELETON,
+                        output_size=(inp_h, inp_w),
+                        point_color=(0, 0, 255), line_color=(0, 0, 255)
+                    )
+
                     # BGR 转 RGB 以便构造 WandB 图像
                     vis_rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)
                     vis_list.append(wandb.Image(vis_rgb, caption=f"Image {img_id} – GT (green) vs Pred (red)"))
