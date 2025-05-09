@@ -1,0 +1,20 @@
+data_root: 'run/data'
+batch_size: 256
+learning_rate: 1e-4
+epochs: 1000
+img_h: 256
+img_w: 256
+hm_h: 64
+hm_w: 64
+sigma: 2
+ohkm_k: 8
+n_vis: 3
+num_workers_train: 16
+num_workers_val: 8
+grad_clip: 5.0
+seed: 42
+use_amp: True
+use_ema: True
+struct_weight: 0.0
+
+
