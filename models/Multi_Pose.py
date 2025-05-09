@@ -174,11 +174,6 @@ class MultiPoseNet(nn.Module):
             self.refine_paf     = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
             self.relu = nn.ReLU(inplace=True)
 
-        nn.init.constant_(self.heatmap_head.bias, -2.0)
-        if refine:
-            nn.init.constant_(self.refine_heatmap.bias, -2.0)
-
-
 
     def forward(self, x):
         # 1. 骨干特征提取 (多尺度)
