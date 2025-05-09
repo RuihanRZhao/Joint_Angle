@@ -179,7 +179,7 @@ def evaluate(model, val_loader, device, vis_ids=None):
                 # 5. 可视化：将GT和预测关键点骨架叠加绘制在图像上
                 if img_id in vis_set:
                     img_info = orig_img_info
-                    img_path = os.path.join(val_loader.dataset.root, val_loader.dataset.img_dir, img_info['file_name'])
+                    img_path = os.path.join(val_loader.dataset.img_dir, img_info['file_name'])
                     orig_img = cv2.imread(img_path)
                     if orig_img is None:
                         orig_img = np.zeros((orig_h, orig_w, 3), dtype=np.uint8)
@@ -189,9 +189,9 @@ def evaluate(model, val_loader, device, vis_ids=None):
                     # 绘制GT关键点（绿色）
                     gt_ann_ids = coco_gt.getAnnIds(imgIds=[img_id], catIds=[1], iscrowd=None)
                     gt_anns = coco_gt.loadAnns(gt_ann_ids)
-                    vis_img = visualize_coco_keypoints(vis_img, gt_anns, COCO_PERSON_SKELETON,
-                                                       resize=val_loader.dataset.img_size,
-                                                       kp_color=(0, 255, 0), limb_color=(0, 255, 0))
+                    vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,
+                                                       output_size=val_loader.dataset.img_size,
+                                                       point_color=(0, 0, 255), line_color=(0, 0, 255))
                     # 绘制预测关键点（红色）
                     pred_anns = []
                     for person in persons:
