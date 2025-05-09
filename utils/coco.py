@@ -123,7 +123,7 @@ class COCOPoseDataset(Dataset):
         H_hm, W_hm = self.hm_size
 
         # 构造 joint_coords_gt: [n_person, 17, 3] (x, y, v)，在 heatmap 尺度下
-        max_person = 10  # 可调整：图中最多支持多少人
+        max_person = 15  # 可调整：图中最多支持多少人
         joint_coords = np.zeros((max_person, NUM_KP, 3), dtype=np.float32)
 
         for i, ann in enumerate(anns[:max_person]):  # 最多保留 max_person 人
