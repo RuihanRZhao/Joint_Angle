@@ -105,7 +105,7 @@ class COCOPoseDataset(Dataset):
         info = self.coco.loadImgs(img_id)[0]
         img_path = os.path.join(self.img_dir, info['file_name'])
         img = Image.open(img_path).convert("RGB")
-        img = img.resize(self.input_size, Image.BILINEAR)
+        img = img.resize(self.img_size, Image.BILINEAR)
         img_np = np.array(img, dtype=np.float32) / 255.0
         img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
 
