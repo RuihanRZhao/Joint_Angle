@@ -85,7 +85,7 @@ class COCOPoseDataset(Dataset):
             raise RuntimeError(f"数据集中没有找到任何包含关键点的图像，请检查 {ann_path} 的内容。")
 
         # 5) 参数存储
-        self.input_size = input_size
+        self.img_size = input_size
         self.hm_size = hm_size
         self.sigma = sigma
         self.paf_thickness = paf_thickness
