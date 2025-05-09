@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import math
 import wandb
 from typing import Tuple, List
+from torchvision.models import mobilenet_v2
 
 
 COCO_PERSON_SKELETON: List[Tuple[int, int]] = [
@@ -45,50 +46,31 @@ class InvertedResidual(nn.Module):
 
 class MobileNetV2Backbone(nn.Module):
     """MobileNetV2骨干网络，用于特征提取"""
-    def __init__(self, width_mult=1.0):
+    def __init__(self, width_mult=1.0, pretrained=True):
         super().__init__()
-        # 根据宽度倍率计算各层通道数，保证可被8整除
-        def _make_divisible(v, divisor=8):
-            return int(math.ceil(v / divisor) * divisor)
-        # 定义各阶段通道
-        ch1 = _make_divisible(32 * width_mult, 8)
-        ch2 = _make_divisible(16 * width_mult, 8)
-        ch3 = _make_divisible(24 * width_mult, 8)
-        ch4 = _make_divisible(32 * width_mult, 8)
-        ch5 = _make_divisible(64 * width_mult, 8)
-        ch6 = _make_divisible(96 * width_mult, 8)
-        ch7 = _make_divisible(160 * width_mult, 8)
-        ch8 = _make_divisible(320 * width_mult, 8)
-        # 构建MobileNetV2各层
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(3, ch1, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(ch1),
-            nn.ReLU6(inplace=True)
-        )
-        # 第一阶段
-        self.block1 = InvertedResidual(ch1, ch2, stride=1, expand_ratio=1)
-        # 第二阶段 (降采样至1/4)
-        self.block2 = InvertedResidual(ch2, ch3, stride=2, expand_ratio=6)
-        self.block3 = InvertedResidual(ch3, ch3, stride=1, expand_ratio=6)
-        # 第三阶段 (降采样至1/8)
-        self.block4 = InvertedResidual(ch3, ch4, stride=2, expand_ratio=6)
-        self.block5 = InvertedResidual(ch4, ch4, stride=1, expand_ratio=6)
-        self.block6 = InvertedResidual(ch4, ch4, stride=1, expand_ratio=6)
-        # 第四阶段 (降采样至1/16)
-        self.block7 = InvertedResidual(ch4, ch5, stride=2, expand_ratio=6)
-        self.block8 = InvertedResidual(ch5, ch5, stride=1, expand_ratio=6)
-        self.block9 = InvertedResidual(ch5, ch5, stride=1, expand_ratio=6)
-        self.block10 = InvertedResidual(ch5, ch5, stride=1, expand_ratio=6)
-        # 第五阶段 (保持1/16, 提升通道)
-        self.block11 = InvertedResidual(ch5, ch6, stride=1, expand_ratio=6)
-        self.block12 = InvertedResidual(ch6, ch6, stride=1, expand_ratio=6)
-        self.block13 = InvertedResidual(ch6, ch6, stride=1, expand_ratio=6)
-        # 第六阶段 (降采样至1/32)
-        self.block14 = InvertedResidual(ch6, ch7, stride=2, expand_ratio=6)
-        self.block15 = InvertedResidual(ch7, ch7, stride=1, expand_ratio=6)
-        self.block16 = InvertedResidual(ch7, ch7, stride=1, expand_ratio=6)
-        # 第七阶段 (保持1/32, 扩展通道)
-        self.block17 = InvertedResidual(ch7, ch8, stride=1, expand_ratio=6)
+
+        # 加载 torchvision 的 MobileNetV2 backbone
+        backbone = mobilenet_v2(pretrained=pretrained).features
+
+        # 直接引用前17个 block（含 conv1）
+        self.conv1  = backbone[0]   # ConvBNReLU
+        self.block1 = backbone[1]
+        self.block2 = backbone[2]
+        self.block3 = backbone[3]
+        self.block4 = backbone[4]
+        self.block5 = backbone[5]
+        self.block6 = backbone[6]
+        self.block7 = backbone[7]
+        self.block8 = backbone[8]
+        self.block9 = backbone[9]
+        self.block10 = backbone[10]
+        self.block11 = backbone[11]
+        self.block12 = backbone[12]
+        self.block13 = backbone[13]
+        self.block14 = backbone[14]
+        self.block15 = backbone[15]
+        self.block16 = backbone[16]
+        self.block17 = backbone[17]
     def forward(self, x):
         # 前向传播提取多尺度特征
         x = self.conv1(x)          # 下采样1/2
