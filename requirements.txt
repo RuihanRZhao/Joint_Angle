@@ -17,3 +17,5 @@ pycocotools
 tqdm
 
 spicy
+
+PyYAML

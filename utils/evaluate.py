@@ -40,23 +40,13 @@ def evaluate(model, val_loader, device, vis_ids=None):
         vis_set = set(random.sample(val_loader.dataset.img_ids, min(n_vis, len(val_loader.dataset.img_ids))))
     idx_offset = 0
     with torch.no_grad():
-        for batch_idx, (imgs, _, _) in enumerate(tqdm(val_loader, desc="Evaluating", unit="batch")):
+        for batch_idx, (imgs, _, _, _) in enumerate(tqdm(val_loader, desc="Evaluating", unit="batch")):
             imgs = imgs.to(device)
             # 模型预测
-            output = model(imgs)
-            # 兼容不同输出格式（支持精细化输出）
-            if isinstance(output, (tuple, list)):
-                # refine模型有4个输出：使用精细化输出作为最终预测
-                if len(output) == 4:
-                    heatmaps_pred = output[0]  # 精细化 heatmap
-                    pafs_pred = output[1]      # 精细化 PAF
-                elif len(output) == 2:
-                    heatmaps_pred, pafs_pred = output  # 无精细化
-                else:
-                    raise ValueError(f"evaluate: 模型输出长度不符合预期: {len(output)}")
-            else:
-                heatmaps_pred = output
-                pafs_pred = None
+            #   兼容不同输出格式（支持精细化输出）
+            hm_refine, paf_refine, hm_init, paf_init = model(imgs)
+            heatmaps_pred, pafs_pred = hm_refine, paf_refine
+
             B = heatmaps_pred.shape[0]  # batch中图片数
             H, W = heatmaps_pred.shape[2], heatmaps_pred.shape[3]
             # 遍历 batch 内每张图片
@@ -220,8 +210,8 @@ def evaluate(model, val_loader, device, vis_ids=None):
                             kp_list.extend([float(x_disp), float(y_disp), float(v)])
                         pred_anns.append({'keypoints': kp_list, 'num_keypoints': num_visible})
                     vis_img = visualize_coco_keypoints(vis_img, pred_anns, COCO_PERSON_SKELETON,
-                                                       resize=val_loader.dataset.img_size,
-                                                       kp_color=(0, 0, 255), limb_color=(0, 0, 255))
+                                                       output_size=val_loader.dataset.img_size,
+                                                       point_color=(0, 0, 255), line_color=(0, 0, 255))
                     # BGR 转 RGB 以便构造 WandB 图像
                     vis_rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)
                     vis_list.append(wandb.Image(vis_rgb, caption=f"Image {img_id} – GT (green) vs Pred (red)"))
@@ -238,4 +228,8 @@ def evaluate(model, val_loader, device, vis_ids=None):
     coco_eval.summarize()
     mean_ap = coco_eval.stats[0]  # 平均AP (OKS 0.50:0.95)
     ap50 = coco_eval.stats[1]     # AP@0.5 (OKS=0.50)
+
+
+    model.train()
+
     return mean_ap, ap50, vis_list

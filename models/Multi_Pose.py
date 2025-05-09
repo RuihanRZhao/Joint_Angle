@@ -172,7 +172,7 @@ class MultiPoseNet(nn.Module):
             self.refine_paf     = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
             self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x, img_metas=None):
+    def forward(self, x):
         # 1. 骨干特征提取 (多尺度)
         feat2, feat3, feat5, feat7 = self.backbone(x)
         # 2. 特征融合 (自顶向下, 类似FPN)
@@ -202,8 +202,5 @@ class MultiPoseNet(nn.Module):
         refined_paf = self.refine_paf(r)
         # 返回 (精细化热图, 精细化PAF)
 
-        if img_metas is not None:
-            return refined_heatmap, refined_paf
 
-
-        return refined_heatmap, refined_paf
+        return refined_heatmap, refined_paf, init_heatmap, init_paf

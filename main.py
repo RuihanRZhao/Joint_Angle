@@ -1,6 +1,9 @@
 import os
 import torch
 import wandb
+import argparse
+import yaml
+
 from torch.utils.data import DataLoader
 # 导入模型、损失函数、训练工具和评估函数
 from models.Multi_Pose import MultiPoseNet  # 假设模型定义在 models.pose_model
@@ -11,29 +14,55 @@ from utils.scheduler import build_onecycle_scheduler
 # 导入数据集类 (假定实现了 COCO 骨骼数据集)
 from utils.coco import COCOPoseDataset
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train MultiPoseNet with config file')
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
+    args = parser.parse_args()
+    with open(args.config, 'r') as f:
+        cfg = yaml.safe_load(f)
+    return cfg
+
 if __name__ == "__main__":
+    cfg = parse_args()
+
     # 配置超参数和训练设置
-    epochs = 50
-    batch_size = 16
-    learning_rate = 5e-4
-    use_amp = True          # 是否使用混合精度训练
-    use_ema = True          # 是否使用EMA滑动平均模型
-    grad_clip = 5.0         # 梯度裁剪阈值 (None表示不裁剪)
-    ohkm_k = 8              # 在线困难关键点挖掘(OHKM)选取的关键点数
-    struct_weight = 0.0     # 骨架结构约束损失权重 (0表示不使用结构损失)
-    n_vis = 3               # 每轮随机可视化验证集样本数量
+    data_root = cfg['data_root']
+    batch_size = cfg['batch_size']
+    learning_rate = cfg['learning_rate']
+    epochs = cfg['epochs']
+    img_h, img_w = cfg['img_h'], cfg['img_w']
+    hm_h, hm_w = cfg['hm_h'], cfg['hm_w']
+    sigma = cfg['sigma']
+    ohkm_k = cfg['ohkm_k']
+    n_vis = cfg['n_vis']
+    num_workers_train = cfg['num_workers_train']
+    num_workers_val = cfg['num_workers_val']
+    grad_clip = cfg['grad_clip']
+    seed = cfg['seed']
+    use_amp = cfg['use_amp']
+    use_ema = cfg['use_ema']
+    struct_weight = cfg['struct_weight']
 
     # 初始化 Weights & Biases 日志
     wandb.init(project="PoseEstimation", config={
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "learning_rate": learning_rate,
-        "use_amp": use_amp,
-        "use_ema": use_ema,
-        "grad_clip": grad_clip,
-        "ohkm_k": ohkm_k,
-        "struct_weight": struct_weight,
-        "n_vis": n_vis
+        'data_root':  data_root,
+        'batch_size':  batch_size,
+        'learning_rate':  learning_rate,
+        'epochs':  epochs,
+        'img_h':  img_h,
+        'img_w':  img_w,
+        'hm_h':  hm_h,
+        'hm_w':  hm_w,
+        'sigma':  sigma,
+        'ohkm_k':  ohkm_k,
+        'n_vis':  n_vis,
+        'num_workers_train':  num_workers_train,
+        'num_workers_val':  num_workers_val,
+        'grad_clip':  grad_clip,
+        'seed':  seed,
+        'use_amp':  use_amp,
+        'use_ema':  use_ema,
+        'struct_weight':  struct_weight,
     })
     config = wandb.config
 
@@ -49,12 +78,12 @@ if __name__ == "__main__":
         ann_file="annotations/person_keypoints_val2017.json",
         img_folder="val2017"
     )
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=num_workers_train, prefetch_factor=2)
+    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=num_workers_val, prefetch_factor=2)
 
     # 初始化模型、损失函数、优化器等
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MultiPoseNet(backbone="mobilenetv2", num_keypoints=17, refine=True)  # 假设PoseModel使用MobileNetV2骨干
+    model = MultiPoseNet(num_keypoints=17, refine=True)  # 假设PoseModel使用MobileNetV2骨干
     model.to(device)
     criterion = PoseLoss(ohkm_k=config.ohkm_k, struct_weight=config.struct_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)

@@ -25,13 +25,14 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_amp=False, 
     epoch_loss = 0.0
     num_samples = 0
     # 遍历训练集
-    for imgs, heatmaps, pafs in loader:
+    for imgs, heatmaps, pafs, _ in loader:
         imgs = imgs.to(device, non_blocking=True)
         heatmaps = heatmaps.to(device, non_blocking=True)
         pafs = pafs.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
         # 前向传播（混合精度上下文）
         with autocast(enabled=use_amp):
+
             outputs = model(imgs)
             loss = criterion(outputs, (heatmaps, pafs))
         # 反向传播
