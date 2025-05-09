@@ -161,6 +161,10 @@ class MultiPoseNet(nn.Module):
         self.heatmap_head = nn.Conv2d(unify_dim, num_keypoints, 1)
         self.paf_head     = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
 
+        nn.init.constant_(self.heatmap_head.bias, -2.0)
+        if refine:
+            nn.init.constant_(self.refine_heatmap.bias, -2.0)
+
         # Refinement 模块（如启用）
         if refine:
             refine_in = unify_dim + num_keypoints + 2 * NUM_LIMBS
@@ -171,6 +175,8 @@ class MultiPoseNet(nn.Module):
             self.refine_heatmap = nn.Conv2d(unify_dim, num_keypoints, 1)
             self.refine_paf     = nn.Conv2d(unify_dim, 2 * NUM_LIMBS, 1)
             self.relu = nn.ReLU(inplace=True)
+
+
 
     def forward(self, x):
         # 1. 骨干特征提取 (多尺度)
@@ -192,10 +198,8 @@ class MultiPoseNet(nn.Module):
         # 3. 初始Heatmap和PAF输出
         init_heatmap = self.heatmap_head(merge_2)
         init_paf = self.paf_head(merge_2)
-        if not self.refine:
-            return init_heatmap, init_paf
         # 4. 精细化阶段: 融合初始输出进行二次预测
-        refine_input = torch.cat([merge_2, init_heatmap, init_paf], dim=1)
+        refine_input = torch.cat([merge_2, init_heatmap.detach(), init_paf.detach()], dim=1)
         r = self.relu(self.bn_ref1(self.refine_conv1(refine_input)))
         r = self.relu(self.bn_ref2(self.refine_conv2(r)))
         refined_heatmap = self.refine_heatmap(r)

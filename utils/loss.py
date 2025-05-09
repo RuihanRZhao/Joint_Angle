@@ -31,6 +31,8 @@ class PoseLoss(nn.Module):
         返回:
          total_loss: 总损失张量 (标量)
         """
+
+
         # 解包真值
         if isinstance(targets, (tuple, list)):
             if len(targets) == 2:
@@ -77,29 +79,13 @@ class PoseLoss(nn.Module):
                 # PAF损失：对所有像素取平均
                 loss_paf_refine = F.mse_loss(refined_paf, paf_gt, reduction='mean') if paf_gt is not None else 0.0
                 # 合并heatmap损失和PAF损失（初始+精细化）
-                heatmap_loss = loss_heat_init + loss_heat_refine
-                paf_loss = loss_paf_init + loss_paf_refine
+                weight_bias = 1.0
+                if self.ohkm_k > 0:
+                    weight_bias = 0.5
+                heatmap_loss = loss_heat_init*weight_bias + loss_heat_refine
+                paf_loss = loss_paf_init*weight_bias + loss_paf_refine
                 # 选择用于结构损失的预测热图（使用精细化后的输出）
                 main_heatmap_pred = refined_heatmap
-            elif len(outputs) == 2:
-                # 无精细化阶段，outputs = (heatmap, paf)
-                heatmap_pred, paf_pred = outputs
-                # Heatmap损失: 应用OHKM（若设置）或普通MSE
-                if self.ohkm_k is not None and self.ohkm_k > 0:
-                    diff_sq = (heatmap_pred - heatmap_gt) ** 2  # [B, K, H, W] 平方误差
-                    per_kp_loss = diff_sq.mean(dim=(2, 3))      # [B, K]
-                    K = min(self.ohkm_k, per_kp_loss.shape[1])
-                    ohkm_loss_list = []
-                    for i in range(per_kp_loss.size(0)):
-                        kp_losses = per_kp_loss[i]
-                        topk_vals, _ = torch.topk(kp_losses, k=K, largest=True)
-                        ohkm_loss_list.append(topk_vals.mean())
-                    heatmap_loss = torch.stack(ohkm_loss_list).mean()
-                else:
-                    heatmap_loss = F.mse_loss(heatmap_pred, heatmap_gt, reduction='mean')
-                # PAF损失: 如果有PAF输出，则计算MSE，否则为0
-                paf_loss = F.mse_loss(paf_pred, paf_gt, reduction='mean') if (paf_pred is not None and paf_gt is not None) else 0.0
-                main_heatmap_pred = heatmap_pred
             else:
                 raise ValueError(f"未预期的模型输出长度: {len(outputs)}")
         else:
