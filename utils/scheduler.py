@@ -20,7 +20,7 @@ def build_onecycle_scheduler(optimizer, train_loader, epochs, base_lr):
     # final_div_factor 最终学习率将是 max_lr/final_div_factor
     scheduler = OneCycleLR(
         optimizer, max_lr=base_lr, epochs=epochs, steps_per_epoch=len(train_loader),
-        pct_start=0.1,  # 将前10%训练用于warm-up
+        pct_start=0.01,  # 将前10%训练用于warm-up
         anneal_strategy='cos',
         div_factor=10.0,  # 初始学习率 = max_lr/10
         final_div_factor=1e4  # 最终学习率 = max_lr/1e4
