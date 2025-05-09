@@ -64,7 +64,7 @@ class COCOPoseDataset(Dataset):
         ensure_coco_data(root, retries=download_retries, backoff_factor=backoff_factor)
 
         # 2) 加载 COCO 注解
-        ann_path = os.path.join(root, "annotations", ann_file)
+        ann_path = os.path.join(root, ann_file)
         if not os.path.isfile(ann_path):
             raise RuntimeError(f"找不到注解文件：{ann_path}")
         self.coco = COCO(ann_path)
