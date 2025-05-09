@@ -45,7 +45,6 @@ if __name__ == "__main__":
 
     # 初始化 Weights & Biases 日志
     wandb.init(project="PoseEstimation", config={
-        'data_root':  data_root,
         'batch_size':  batch_size,
         'learning_rate':  learning_rate,
         'epochs':  epochs,
@@ -69,14 +68,14 @@ if __name__ == "__main__":
     # 构建训练和验证数据集与数据加载器
     # 请根据实际数据路径和实现调整参数
     train_dataset = COCOPoseDataset(
-        root="data/coco",
+        root=data_root,
         ann_file="annotations/person_keypoints_train2017.json",
         img_dir="train2017",
         input_size=(img_h, img_w),
         hm_size=(hm_h, hm_w)
     )
     val_dataset = COCOPoseDataset(
-        root="data/coco",
+        root=data_root,
         ann_file="annotations/person_keypoints_val2017.json",
         img_dir="val2017",
         input_size=(img_h, img_w),
@@ -124,9 +123,9 @@ if __name__ == "__main__":
         # 保存当前最佳模型权重
         if mean_ap > best_ap:
             best_ap = mean_ap
-            torch.save(model.state_dict(), "best_model.pth")
+            torch.save(model.state_dict(), f"best_model_ep{epoch + 1}.pth")
             if ema is not None:
-                torch.save(ema.ema_model.state_dict(), "best_model_ema.pth")
+                torch.save(ema.ema_model.state_dict(), f"best_model_ema_ep{epoch + 1}.pth")
         print(f"Epoch {epoch+1}/{config.epochs} - Loss: {avg_loss:.4f} - mAP: {mean_ap:.4f} - AP50: {ap50:.4f}")
 
     # 保存最后一轮模型权重
