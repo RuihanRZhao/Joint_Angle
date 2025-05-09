@@ -2,8 +2,8 @@ data_root: 'run/data'
 batch_size: 64
 learning_rate: !!float 1e-4
 epochs: 1000
-img_h: 256
-img_w: 256
+img_h: 512
+img_w: 512
 hm_h: 128
 hm_w: 128
 sigma: 2
