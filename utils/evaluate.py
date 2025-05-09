@@ -179,7 +179,7 @@ def evaluate(model, val_loader, device, vis_ids=None):
                 # 5. 可视化：将GT和预测关键点骨架叠加绘制在图像上
                 if img_id in vis_set:
                     img_info = orig_img_info
-                    img_path = os.path.join(val_loader.dataset.root, val_loader.dataset.img_folder, img_info['file_name'])
+                    img_path = os.path.join(val_loader.dataset.root, val_loader.dataset.img_dir, img_info['file_name'])
                     orig_img = cv2.imread(img_path)
                     if orig_img is None:
                         orig_img = np.zeros((orig_h, orig_w, 3), dtype=np.uint8)

@@ -25,6 +25,11 @@ def parse_args():
 if __name__ == "__main__":
     cfg = parse_args()
 
+    print(f"============ CONFIG ============")
+    for key,data in cfg.items():
+        print(f"  {key:15} = {data}")
+    print(f"================================")
+
     # 配置超参数和训练设置
     data_root = cfg['data_root']
     batch_size = cfg['batch_size']
@@ -44,7 +49,7 @@ if __name__ == "__main__":
     struct_weight = cfg['struct_weight']
 
     # 初始化 Weights & Biases 日志
-    wandb.init(project="PoseEstimation", config={
+    wandb.init(project="Multi_Pose", config={
         'batch_size':  batch_size,
         'learning_rate':  learning_rate,
         'epochs':  epochs,
