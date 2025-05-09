@@ -106,10 +106,10 @@ if __name__ == "__main__":
     best_ap = 0.0
     # 训练循环
     for epoch in range(epochs):
-        if best_ap >= 0.1:
+        if epoch > 150:
             criterion.ohkm_k = ohkm_k
 
-        if best_ap >= 0.5:
+        if best_ap >= 0.3:
             criterion.struct_weight = 0.1
 
 
