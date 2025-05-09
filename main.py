@@ -71,12 +71,16 @@ if __name__ == "__main__":
     train_dataset = COCOPoseDataset(
         root="data/coco",
         ann_file="annotations/person_keypoints_train2017.json",
-        img_folder="train2017"
+        img_dir="train2017",
+        input_size=(img_h, img_w),
+        hm_size=(hm_h, hm_w)
     )
     val_dataset = COCOPoseDataset(
         root="data/coco",
         ann_file="annotations/person_keypoints_val2017.json",
-        img_folder="val2017"
+        img_dir="val2017",
+        input_size=(img_h, img_w),
+        hm_size=(hm_h, hm_w)
     )
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=num_workers_train, prefetch_factor=2)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=num_workers_val, prefetch_factor=2)
