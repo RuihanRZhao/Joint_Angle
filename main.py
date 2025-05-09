@@ -87,7 +87,7 @@ if __name__ == "__main__":
         hm_size=(hm_h, hm_w)
     )
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers_train, prefetch_factor=2)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers_val, prefetch_factor=2)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size*4, shuffle=False, num_workers=num_workers_val, prefetch_factor=2)
 
     # 初始化模型、损失函数、优化器等
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -154,9 +154,9 @@ def evaluate(model, val_loader, device, vis_ids=None):
                     kps, scores = [], []
                     for k in range(K):
                         if k in person:
-                            x, y, sc = all_peaks[k][person[k]]
-                            x = x * (orig_w / W)
-                            y = y * (orig_h / H)
+                            raw_x, raw_y, sc = all_peaks[k][person[k]]
+                            x = raw_x * (orig_w / W)
+                            y = raw_y * (orig_h / H)
                             v = 2
                         else:
                             x, y, sc, v = 0.0, 0.0, 0.0, 0
