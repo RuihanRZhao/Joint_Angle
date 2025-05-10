@@ -6,7 +6,7 @@ import yaml
 
 from torch.utils.data import DataLoader
 # 导入模型、损失函数、训练工具和评估函数
-from models.Multi_Pose import MultiPoseNet  # 假设模型定义在 models.pose_model
+from networks.Joint_Pose import MultiPoseNet  # 假设模型定义在 networks.pose_model
 from utils.loss import PoseLoss
 from utils.train_utils import train_one_epoch, ModelEMA
 from utils.evaluate import evaluate
