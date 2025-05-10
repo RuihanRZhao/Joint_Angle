@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 
-from components import InvertedResidual
-from components import GhostBottleneck
+from .components import InvertedResidual, GhostBottleneck
 
 class JointPoseNet(nn.Module):
     def __init__(self, num_joints=17):
