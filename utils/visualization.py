@@ -2,9 +2,6 @@ import cv2
 import numpy as np
 from typing import List, Tuple, Dict
 
-from pycocotools.coco import COCO
-
-from .coco import COCO_PERSON_SKELETON
 
 def visualize_coco_keypoints(
     img: np.ndarray,

@@ -1,17 +1,12 @@
 import torch
 import torch.nn as nn
 
-
 from components import InvertedResidual
 from components import GhostBottleneck
 
-
-
-
-
-class MobilePoseNet(nn.Module):
+class JointPoseNet(nn.Module):
     def __init__(self, num_joints=17):
-        super(MobilePoseNet, self).__init__()
+        super(JointPoseNet, self).__init__()
         self.num_joints = num_joints
         # MobileNetV2 backbone settings
         self.backbone = nn.ModuleList()
@@ -90,10 +85,10 @@ class MobilePoseNet(nn.Module):
         up_feat1 = self.upsample1(features)   # 1/8, 64 channels
         up_feat2 = self.upsample2(up_feat1)   # 1/4, 64 channels
         # Stage 1 heatmaps
-        heatmap1 = self.heatmap_conv1(up_feat2)
+        heatmap_init = self.heatmap_conv1(up_feat2)
         # Stage 2 refinement: concatenate high-res features and stage1 heatmaps
-        combined = torch.cat([hr_feat, heatmap1], dim=1)
+        combined = torch.cat([hr_feat, heatmap_init], dim=1)
         refine_feat = self.refine_conv1(combined)
-        heatmap2 = self.heatmap_conv2(refine_feat)
+        heatmap_refine = self.heatmap_conv2(refine_feat)
         # Return both stage outputs (for multi-stage training supervision if needed)
-        return heatmap1, heatmap2
+        return heatmap_init, heatmap_refine

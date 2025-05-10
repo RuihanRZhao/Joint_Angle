@@ -1,20 +1,27 @@
+run_root: 'run'
 data_root: 'run/data'
+checkpoint_root: 'run/checkpoints'
+
+# resume stuff
+resume: !!bool False
+resume_id: 1
+
+input_h: !!int 216
+input_w: !!int 384
+
+epochs: 1000
 batch_size: 64
 learning_rate: !!float 1e-4
-epochs: 1000
-img_h: 512
-img_w: 512
-hm_h: 128
-hm_w: 128
-sigma: 2
-ohkm_k: 8
+
+# optimizer and scheduler
+div_factor: !!float 25.0
+warmup_pct: !!float 0.01
+
 n_vis: 6
+
 num_workers_train: 16
 num_workers_val: 16
-grad_clip: 5.0
-seed: 42
-use_amp: True
-use_ema: True
-struct_weight: 0.0
+
+
 
 
