@@ -1,6 +1,5 @@
 import os
 
-import json
 import numpy as np
 from PIL import Image
 
@@ -16,12 +15,12 @@ from pycocotools.coco import COCO
 
 
 import zipfile
-from typing import Tuple, List
 from tqdm import tqdm
 import requests
 
 import time
-import math
+
+from encoder_decoder import keypoints_to_heatmaps
 
 class COCOPoseDataset(Dataset):
     """Custom Dataset for COCO keypoint data (single-person)."""
@@ -112,39 +111,7 @@ class COCOPoseDataset(Dataset):
             img_tensor = transforms.ToTensor()(img_resized)  # convert to [0,1] float tensor
             img_tensor = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                               std=[0.229, 0.224, 0.225])(img_tensor)
-        # Generate target heatmaps for keypoints
-        num_joints = keypoints.shape[0]
-        out_w, out_h = input_w // 4, input_h // 4  # output heatmap size (assuming 1/4 resolution)
-        target_heatmaps = np.zeros((num_joints, out_h, out_w), dtype=np.float32)
-        sigma = 2.0
-        tmp_size = sigma * 3
-        # For each joint, draw a Gaussian on the heatmap
-        for j in range(num_joints):
-            x_j, y_j, v_j = keypoints[j]
-            if v_j < 1:  # v=0 (not labeled) -> no target
-                continue
-            # Compute coordinate in heatmap space
-            x_hm = x_j * (out_w / input_w)
-            y_hm = y_j * (out_h / input_h)
-            jx = int(np.round(x_hm))
-            jy = int(np.round(y_hm))
-            if jx < 0 or jx >= out_w or jy < 0 or jy >= out_h:
-                # Skip if joint is outside the bounds after transform (shouldn't happen often)
-                continue
-            # Determine Gaussian bounds on the heatmap
-            x0 = max(0, jx - int(tmp_size))
-            y0 = max(0, jy - int(tmp_size))
-            x1 = min(out_w, jx + int(tmp_size) + 1)
-            y1 = min(out_h, jy + int(tmp_size) + 1)
-            # Create mesh grid for the Gaussian patch
-            gx = np.arange(x0, x1)
-            gy = np.arange(y0, y1)[:, np.newaxis]
-            # Gaussian distribution centered at (jx, jy)
-            gaussian = np.exp(-((gx - jx) ** 2 + (gy - jy) ** 2) / (2 * sigma ** 2))
-            # Place the Gaussian patch in the heatmap (using maximum in case of overlap)
-            target_heatmaps[j, y0:y1, x0:x1] = np.maximum(target_heatmaps[j, y0:y1, x0:x1], gaussian)
-        # Convert to torch tensor
-        target_heatmaps = torch.from_numpy(target_heatmaps)
+        target_heatmaps = keypoints_to_heatmaps(keypoints)
         return img_tensor, target_heatmaps
 
 def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):

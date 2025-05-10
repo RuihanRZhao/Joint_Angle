@@ -1,17 +1,15 @@
 import os
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
 
 import wandb
-from tqdm import tqdm, trange
 
 from networks.Joint_Pose import JointPoseNet
-from network_utils import HeatmapMSELoss
+from utils.network_utils import HeatmapMSELoss
 
-from dataset_util.coco import COCOPoseDataset
+from utils.dataset_util.coco import COCOPoseDataset
 from utils import get_config, train_one_epoch
 
 
@@ -73,7 +71,6 @@ def main():
     optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=1e-4, betas=(0.9, 0.999))  # div_factor default is 25
     
     # Define OneCycleLR scheduler
-    total_steps = config['epochs'] * len(train_loader)
     scheduler = OneCycleLR(optimizer, max_lr=config['learning_rate'], epochs=config['epochs'],
                            steps_per_epoch=len(train_loader), pct_start=config['warmup_pct'],
                            div_factor=config['div_factor'], final_div_factor=10000.0, anneal_strategy='cos')
