@@ -171,9 +171,8 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
     # 检查文件夹和文件是否完整
     def is_data_complete(target_folder, zip_path):
         if os.path.isdir(target_folder):
-            # 如果文件夹已经存在，检查文件是否完整
             if zip_path == os.path.join(root, "annotations.zip"):
-                # 检查 annotations 文件夹是否包含所需的注解文件
+                # 注解文件夹必须包含所有必要的注解文件
                 if os.path.exists(os.path.join(target_folder, 'instances_train2017.json')) and \
                         os.path.exists(os.path.join(target_folder, 'instances_val2017.json')):
                     return True
@@ -181,6 +180,12 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
                 # 对于图片文件夹，检查是否包含至少一张图片
                 if len(os.listdir(target_folder)) > 0:
                     return True
+        return False
+
+    # 检查压缩包是否完整
+    def is_zip_complete(zip_path, expected_size):
+        if os.path.exists(zip_path) and os.path.getsize(zip_path) == expected_size:
+            return True
         return False
 
     for fname, url in urls.items():
@@ -191,12 +196,29 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
             "annotations.zip": os.path.join(root, "annotations"),
         }[fname]
 
-        # 如果文件夹已经存在且文件完整，则跳过下载和解压
-        if is_data_complete(target_folder, zip_path):
+        # 获取压缩包的大小（如果无法获取，将在下载后获取）
+        expected_size = None
+        if not os.path.exists(zip_path):
+            expected_size = None
+        else:
+            try:
+                response = requests.head(url, timeout=10)
+                response.raise_for_status()
+                expected_size = int(response.headers.get('Content-Length', 0))
+            except requests.exceptions.RequestException:
+                print(f"[COCO] 获取 {fname} 文件大小失败，可能无法验证完整性")
+
+        # 如果压缩包存在且完整，跳过下载，否则删除旧的并重新下载
+        if is_zip_complete(zip_path, expected_size) and is_data_complete(target_folder, zip_path):
             print(f"[COCO] {fname} 已存在且完整，跳过下载和解压。")
             continue
 
-        # 否则，需要下载并解压
+        # 删除已损坏或不完整的压缩包
+        if os.path.exists(zip_path):
+            print(f"[COCO] 删除旧的压缩包 {zip_path}")
+            os.remove(zip_path)
+
+        # 否则，需要重新下载并解压
         for attempt in range(1, retries + 1):
             try:
                 print(f"[COCO] 第 {attempt} 次尝试下载 {fname} ...")
@@ -228,18 +250,21 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
                 else:
                     raise RuntimeError(f"多次下载 {fname} 失败，请检查网络或手动下载安装：{url}")
 
-        # 解压 zip
-        print(f"[COCO] 解压 {zip_path} → {target_folder}")
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as z:
-                # 获取所有文件的列表
-                file_list = z.namelist()
+        # 解压 zip，如果文件已经解压完整，则跳过
+        if not is_data_complete(target_folder, zip_path):
+            print(f"[COCO] 解压 {zip_path} → {target_folder}")
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as z:
+                    # 获取所有文件的列表
+                    file_list = z.namelist()
 
-                # 使用tqdm显示解压进度
-                with tqdm(total=len(file_list), desc="Unzipping", unit="file") as pbar:
-                    for file in file_list:
-                        z.extract(file, target_folder)
-                        pbar.update(1)
+                    # 使用tqdm显示解压进度
+                    with tqdm(total=len(file_list), desc="Unzipping", unit="file") as pbar:
+                        for file in file_list:
+                            z.extract(file, target_folder)
+                            pbar.update(1)
 
-        except zipfile.BadZipFile as e:
-            raise RuntimeError(f"解压 {zip_path} 失败：{e}")
+            except zipfile.BadZipFile as e:
+                raise RuntimeError(f"解压 {zip_path} 失败：{e}")
+        else:
+            print(f"[COCO] {fname} 已解压且完整，跳过解压。")
