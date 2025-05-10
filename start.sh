@@ -25,3 +25,8 @@ EOF
 
 
 pip3 install -r requirements.txt
+
+
+mkdir run/
+mkdir run/data
+mkdir run/checkpoints

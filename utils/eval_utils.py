@@ -92,6 +92,8 @@ def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
                     pred_tensor = torch.from_numpy(orig_kpts)
                     wb_pred = draw_pose_on_image(base_img, pred_tensor, color=(255,0,0))
                     viz_images.append(wb_pred)
+
+
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, iouType='keypoints')
     coco_eval.evaluate()
