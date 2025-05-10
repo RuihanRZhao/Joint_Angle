@@ -188,25 +188,26 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
             return True
         return False
 
+    # 获取压缩包的大小（如果无法获取，将在下载后获取）
+    def get_expected_size(url):
+        try:
+            response = requests.head(url, timeout=10)
+            response.raise_for_status()
+            return int(response.headers.get('Content-Length', 0))
+        except requests.exceptions.RequestException:
+            print(f"[COCO] 获取文件大小失败，可能无法验证完整性")
+            return None
+
     for fname, url in urls.items():
         zip_path = os.path.join(root, fname)
         target_folder = {
-            "train2017.zip": os.path.join(root),
-            "val2017.zip": os.path.join(root),
-            "annotations.zip": os.path.join(root),
+            "train2017.zip": os.path.join(root, "train2017"),
+            "val2017.zip": os.path.join(root, "val2017"),
+            "annotations.zip": os.path.join(root, "annotations"),
         }[fname]
 
-        # 获取压缩包的大小（如果无法获取，将在下载后获取）
-        expected_size = None
-        if not os.path.exists(zip_path):
-            expected_size = None
-        else:
-            try:
-                response = requests.head(url, timeout=10)
-                response.raise_for_status()
-                expected_size = int(response.headers.get('Content-Length', 0))
-            except requests.exceptions.RequestException:
-                print(f"[COCO] 获取 {fname} 文件大小失败，可能无法验证完整性")
+        # 获取预期的文件大小
+        expected_size = get_expected_size(url)
 
         # 如果压缩包存在且完整，跳过下载，否则删除旧的并重新下载
         if is_zip_complete(zip_path, expected_size) and is_data_complete(target_folder, zip_path):
