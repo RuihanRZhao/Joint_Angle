@@ -193,7 +193,7 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
         target_folder = {
             "train2017.zip": os.path.join(root, "train2017"),
             "val2017.zip": os.path.join(root, "val2017"),
-            "annotations.zip": os.path.join(root, "annotations"),
+            "annotations.zip": os.path.join(root),
         }[fname]
 
         # 获取压缩包的大小（如果无法获取，将在下载后获取）
