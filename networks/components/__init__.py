@@ -1,2 +1,2 @@
-from GhostBottleneck import GhostBottleneck
-from InvertedResidual import InvertedResidual
+from .GhostBottleneck import GhostBottleneck
+from .InvertedResidual import InvertedResidual
