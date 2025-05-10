@@ -168,6 +168,21 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
         "annotations.zip": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
     }
 
+    # 检查文件夹和文件是否完整
+    def is_data_complete(target_folder, zip_path):
+        if os.path.isdir(target_folder):
+            # 如果文件夹已经存在，检查文件是否完整
+            if zip_path == os.path.join(root, "annotations.zip"):
+                # 检查 annotations 文件夹是否包含所需的注解文件
+                if os.path.exists(os.path.join(target_folder, 'instances_train2017.json')) and \
+                        os.path.exists(os.path.join(target_folder, 'instances_val2017.json')):
+                    return True
+            else:
+                # 对于图片文件夹，检查是否包含至少一张图片
+                if len(os.listdir(target_folder)) > 0:
+                    return True
+        return False
+
     for fname, url in urls.items():
         zip_path = os.path.join(root, fname)
         target_folder = {
@@ -176,8 +191,9 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
             "annotations.zip": os.path.join(root, "annotations"),
         }[fname]
 
-        # 如果文件夹已经存在，则跳过
-        if os.path.isdir(target_folder):
+        # 如果文件夹已经存在且文件完整，则跳过下载和解压
+        if is_data_complete(target_folder, zip_path):
+            print(f"[COCO] {fname} 已存在且完整，跳过下载和解压。")
             continue
 
         # 否则，需要下载并解压
@@ -213,14 +229,13 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
                     raise RuntimeError(f"多次下载 {fname} 失败，请检查网络或手动下载安装：{url}")
 
         # 解压 zip
-        print(f"[COCO] Unzip {zip_path} → {target_folder}")
-
+        print(f"[COCO] 解压 {zip_path} → {target_folder}")
         try:
             with zipfile.ZipFile(zip_path, 'r') as z:
                 # 获取所有文件的列表
                 file_list = z.namelist()
 
-                # 使用tqdm显示进度
+                # 使用tqdm显示解压进度
                 with tqdm(total=len(file_list), desc="Unzipping", unit="file") as pbar:
                     for file in file_list:
                         z.extract(file, target_folder)
