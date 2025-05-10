@@ -8,7 +8,7 @@ from tqdm import tqdm
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
-from utils import batch_heatmaps_to_keypoints, draw_pose_on_image
+from .dataset_util import batch_heatmaps_to_keypoints, draw_pose_on_image
 
 def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
     """
