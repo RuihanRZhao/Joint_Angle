@@ -1,5 +1,5 @@
-import dataset_util as dataset
-import network_utils as network
+from . import dataset_util as dataset
+from . import network_utils as network
 
 
 from .load_args import get_config
