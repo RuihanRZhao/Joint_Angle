@@ -1,6 +1,6 @@
 import torch.nn as nn
 
-from SE_Block import SEBlock
+from .SE_Block import SEBlock
 
 # Inverted Residual block (MobileNetV2 bottleneck) with optional SE
 class InvertedResidual(nn.Module):

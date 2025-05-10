@@ -1,7 +1,7 @@
 import torch.nn as nn
 
-from Ghost import GhostModule
-from SE_Block import SEBlock
+from .Ghost import GhostModule
+from .SE_Block import SEBlock
 
 # Ghost bottleneck block with optional SE (used in high-res branch)
 class GhostBottleneck(nn.Module):
