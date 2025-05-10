@@ -30,7 +30,7 @@ class HeatmapMSELoss(nn.Module):
         return loss
 
     def _compute_loss(self, pred, target, mask):
-        # 计算单阶段输出的 MSELoss（考虑掩码）
+        # 计算单阶段输出的 MSELoss (考虑掩码)
         diff = pred - target  # 差值
         if mask is not None:
             # 将 mask 扩展为与热图相同形状，用于将未标注关节的误差置零
@@ -38,7 +38,7 @@ class HeatmapMSELoss(nn.Module):
             mask_expanded = mask[:, :, None, None].to(diff.device)
             diff = diff * mask_expanded  # 未标注关键点对应diff为0，不产生损失
             # 仅对标注的关键点计算平均误差:
-            num_present = mask_expanded.sum()  # 有效关键点总数量(乘以H*W后为有效像素总数)
+            num_present = mask_expanded.sum()  # 有效关键点总数量 (每个关键点的H*W像素都计入)
             if num_present.item() == 0:
                 return torch.tensor(0.0, device=diff.device)
             # 将总MSE误差除以有效像素数 (每个有效关键点的热图像素均计入)

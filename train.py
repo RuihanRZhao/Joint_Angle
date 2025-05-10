@@ -53,30 +53,33 @@ def main():
         ann_file="annotations/person_keypoints_val2017.json",
         img_dir="val2017",
         input_size=input_size,
+        return_meta=True
     )
-    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, num_workers=config['num_workers_train'], prefetch_factor=2)
-    val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False, num_workers=config['num_workers_val'], prefetch_factor=2)
+    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True,
+                              num_workers=config['num_workers_train'], prefetch_factor=2)
+    val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False,
+                            num_workers=config['num_workers_val'], prefetch_factor=2)
 
     # Model, criterion, optimizer, scheduler
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = JointPoseNet(num_joints=17)  # COCO has 17 joints
-    
+
     # Note: If Joint_Pose.py forward uses variable 'heatmap1', ensure it is corrected to 'heatmap_init'
     model = model.to(device)
     criterion = HeatmapMSELoss()
-    
-    # Initialize optimizer (set initial LR lower, OneCycle will adjust)
 
-    initial_lr = config['learning_rate']/config['div_factor']
-    optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=1e-4, betas=(0.9, 0.999))  # div_factor default is 25
-    
+    # Initialize optimizer (set initial LR lower, OneCycle will adjust)
+    initial_lr = config['learning_rate'] / config['div_factor']
+    optimizer = AdamW(model.parameters(), lr=initial_lr, weight_decay=1e-4,
+                      betas=(0.9, 0.999))  # div_factor default is 25
+
     # Define OneCycleLR scheduler
     scheduler = OneCycleLR(optimizer, max_lr=config['learning_rate'], epochs=config['epochs'],
                            steps_per_epoch=len(train_loader), pct_start=config['warmup_pct'],
                            div_factor=config['div_factor'], final_div_factor=10000.0, anneal_strategy='cos')
 
     start_epoch = 0
-    best_loss = float('inf')
+    best_ap = float('-inf')
     # Resume from checkpoint if specified
     if config['resume']:
         resume_model_path = os.path.join(config['checkpoint_root'], f"epoch_{config['resume_id']}.pth")
@@ -94,12 +97,17 @@ def main():
         avg_loss = train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device)
         print(f"Epoch {epoch + 1} finished. Average Loss: {avg_loss:.4f}")
 
-        mean_ap, ap50, vis_images = evaluate(model, val_loader, criterion, device)
+        mean_ap, ap50, vis_images = evaluate(
+            model, val_loader,
+            "annotations/person_keypoints_val2017.json",
+            os.path.join(config['data_root'], "val2017"),
+            n_viz=config.get('n_vis', 6)
+        )
 
         # Update best model
-        if avg_loss < best_loss:
+        if ap50 > best_ap:
             best_loss = avg_loss
-            best_path = os.path.join(config['checkpoint_root'], f"best_model_{epoch+1}.pth")
+            best_path = os.path.join(config['checkpoint_root'], f"best_model_{epoch + 1}.pth")
             save_checkpoint({
                 'epoch': epoch,
                 'model': model.state_dict(),
@@ -117,8 +125,6 @@ def main():
             "learning_rate": optimizer.param_groups[0]["lr"],
             "examples": vis_images  # 可视化预测结果
         })
-
-
 
     # Save final model
     final_path = os.path.join(config['checkpoint_root'], "final_model.pth")

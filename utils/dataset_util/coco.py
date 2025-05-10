@@ -22,10 +22,30 @@ import time
 
 from encoder_decoder import keypoints_to_heatmaps
 
+import os
+
+import numpy as np
+from PIL import Image
+
+import torch
+from torch.utils.data import Dataset
+
+from torchvision import transforms
+
+from pycocotools.coco import COCO
+
+import zipfile
+from tqdm import tqdm
+import requests
+
+import time
+
+from encoder_decoder import keypoints_to_heatmaps
+
 class COCOPoseDataset(Dataset):
     """Custom Dataset for COCO keypoint data (single-person)."""
 
-    def __init__(self, root, ann_file, img_dir, input_size=(384, 216), transform=None):
+    def __init__(self, root, ann_file, img_dir, input_size=(384, 216), transform=None, return_meta=False):
         """
         ann_file: path to COCO keypoints annotation JSON (e.g., person_keypoints_train2017.json)
         img_dir: directory containing the images (e.g., train2017 folder)
@@ -43,7 +63,6 @@ class COCOPoseDataset(Dataset):
         if not os.path.isdir(self.img_dir):
             raise RuntimeError(f"找不到图像目录：{self.img_dir}")
 
-
         self.input_size = tuple(input_size)
         self.transform = transform
         # Gather all person annotations with keypoints
@@ -53,11 +72,10 @@ class COCOPoseDataset(Dataset):
             if ann.get('num_keypoints', 0) > 0:
                 # Only consider annotations that have at least one keypoint
                 self.annotations.append(ann)
-
-
-
-    def __len__(self):
-        return len(self.annotations)
+        # Sort annotations by image_id for consistency (optional)
+        self.annotations.sort(key=lambda a: a['image_id'])
+        # Flag to determine return type (for training vs evaluation)
+        self.return_meta = return_meta
 
     def __getitem__(self, idx):
         # Load annotation and corresponding image
@@ -88,31 +106,73 @@ class COCOPoseDataset(Dataset):
         y = y_c - h / 2.0
         # Clamp the coordinates to be within image bounds
         img_width, img_height = img.size
-        x = max(0, x);
+        x = max(0, x)
         y = max(0, y)
-        w = min(w, img_width - x);
+        w = min(w, img_width - x)
         h = min(h, img_height - y)
         # Crop and resize the image to the input size
         crop_box = (int(x), int(y), int(x + w), int(y + h))
         img_crop = img.crop(crop_box)
         input_w, input_h = self.input_size
-        img_resized = img_crop.resize((input_w, input_h), Image.BILINEAR)
-        # Adjust keypoints to the cropped+resized image coordinates
-        keypoints[:, 0] -= x
-        keypoints[:, 1] -= y
-        scale_x = input_w / (w if w != 0 else 1)  # avoid div by zero
-        scale_y = input_h / (h if h != 0 else 1)
-        keypoints[:, 0] *= scale_x
-        keypoints[:, 1] *= scale_y
-        # Apply image transformations (to tensor and normalization, plus any augmentation if provided)
+        # Preserve aspect ratio by padding if needed:
+        # Compute aspect ratios
+        orig_w, orig_h = img_crop.size
+        target_ratio = input_w / input_h
+        orig_ratio = orig_w / orig_h if orig_h != 0 else target_ratio
+        if abs(orig_ratio - target_ratio) < 1e-6:
+            img_resized = img_crop.resize((input_w, input_h), Image.BILINEAR)
+            pad_left = pad_top = pad_right = pad_bottom = 0
+        else:
+            # Determine scale to fit within target while preserving aspect
+            scale = min(input_w / orig_w, input_h / orig_h)
+            new_w = int(orig_w * scale)
+            new_h = int(orig_h * scale)
+            img_scaled = img_crop.resize((new_w, new_h), Image.BILINEAR)
+            # Create new image with black background
+            img_resized = Image.new('RGB', (input_w, input_h))
+            # paste scaled image at top-left (could center, but top-left for simplicity)
+            img_resized.paste(img_scaled, (0, 0))
+            pad_left = pad_top = 0
+            pad_right = input_w - new_w
+            pad_bottom = input_h - new_h
+        # Apply image transformations (to tensor and normalization)
         if self.transform:
             img_tensor = self.transform(img_resized)
         else:
             img_tensor = transforms.ToTensor()(img_resized)  # convert to [0,1] float tensor
             img_tensor = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                               std=[0.229, 0.224, 0.225])(img_tensor)
-        target_heatmaps = keypoints_to_heatmaps(keypoints)
-        return img_tensor, target_heatmaps
+        # If return_meta, skip target generation and return metadata
+        if self.return_meta:
+            # Use the augmented (padded/clamped) bounding box as meta
+            meta_bbox = np.array([x, y, w, h], dtype=np.float32)
+            meta = {
+                'image_id': ann['image_id'],
+                'bbox': meta_bbox
+            }
+            return img_tensor, meta
+        # Otherwise, generate target heatmaps and mask
+        # Adjust keypoints coordinates to cropped & resized image space
+        keypoints[:, 0] -= x
+        keypoints[:, 1] -= y
+        scale_x = input_w / (w if w != 0 else 1)  # avoid div by zero
+        scale_y = input_h / (h if h != 0 else 1)
+        keypoints[:, 0] *= scale_x
+        keypoints[:, 1] *= scale_y
+        # Create target heatmaps
+        target_heatmaps = keypoints_to_heatmaps(keypoints, output_size=(int(input_h//4), int(input_w//4)), sigma=2)
+        # Create mask for keypoints (1 if visible, 0 if not labeled)
+        mask = np.where(keypoints[:, 2] > 0, 1.0, 0.0).astype(np.float32)
+        if isinstance(target_heatmaps, torch.Tensor):
+            target_heatmaps_tensor = target_heatmaps.to(dtype=torch.float32)
+        else:
+            target_heatmaps_tensor = torch.from_numpy(target_heatmaps).to(dtype=torch.float32)
+        mask_tensor = torch.from_numpy(mask)
+        return img_tensor, target_heatmaps_tensor, mask_tensor
+
+    def __len__(self):
+        return len(self.annotations)
+
 
 def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
     """
