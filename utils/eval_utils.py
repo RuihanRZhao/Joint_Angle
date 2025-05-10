@@ -3,6 +3,7 @@ import random
 import torch
 import wandb
 import cv2
+import numpy as np
 from tqdm import tqdm
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -32,7 +33,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
     model.eval()
 
     # 加载 COCO 验证集标注
-    coco_gt = COCO(ann_file)
+    coco_gt = COCO(val_loader.dataset.coco)
 
     results = []
     viz_images = []
@@ -43,27 +44,22 @@ def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
     device = next(model.parameters()).device
 
     with torch.no_grad():
-        for batch_idx, batch in tqdm(enumerate(val_loader), desc="[Evaluating]"):
-            images, meta = batch
+        for batch_idx, (images, meta) in enumerate(val_loader):
             images = images.to(device)
+            # 模型前向
+            outputs = model(images)
+            heatmaps = outputs[-1] if isinstance(outputs, (list, tuple)) else outputs
+            # 解码关键点预测
+            preds = batch_heatmaps_to_keypoints(heatmaps)
+            preds = preds
 
-            # 模型前向得出热图，形状 (B,17,H,W)
-            heatmaps = model(images)
-            if isinstance(heatmaps, (tuple, list)):
-                # 如果模型输出初始和精修两级 heatmap，取第二级
-                heatmaps = heatmaps[-1]
-
-            # 批量解码关键点，得到 (B,17,3)
-            kpts_batch = batch_heatmaps_to_keypoints(heatmaps)
-            kpts_batch = kpts_batch.cpu()
-
-            # 遍历批次样本
-            B = kpts_batch.shape[0]
+            B = preds.shape[0]
             for i in range(B):
+                idx = batch_idx * val_loader.batch_size + i
                 image_id = int(meta['image_id'][i])
-                kpts = kpts_batch[i]  # (17,3)
-                # 构建 COCO 格式结果字典
-                kpts_list = kpts.view(-1).tolist()  # flatten to length 51
+                # 构建评估字典
+                kpts = preds[i]
+                kpts_list = kpts.view(-1).tolist()
                 score = float(kpts[:,2].mean())
                 results.append({
                     "image_id": image_id,
@@ -71,17 +67,41 @@ def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
                     "keypoints": kpts_list,
                     "score": score
                 })
-                # 可视化随机挑选的样本
-                global_idx = batch_idx * val_loader.batch_size + i
-                if global_idx in viz_idxs:
-                    # 读取原始图像
+                # 可视化
+                if idx in viz_idxs:
+                    image_id = int(meta['image_id'][i])
                     info = coco_gt.loadImgs(image_id)[0]
                     img_path = os.path.join(val_image_dir, info['file_name'])
-                    orig = cv2.imread(img_path)
-                    drawn = draw_pose_on_image(orig, kpts[:, :2].numpy(), kpts[:, 2].numpy())
-                    viz_images.append(wandb.Image(drawn, caption=f"ID:{image_id}"))
+                    orig_bgr = cv2.imread(img_path)  # HxWx3, uint8, BGR
 
-    # 用 COCOeval 评估 AP
+                    # 2) 获取 COCO 真值关键点
+                    ann_ids = coco_gt.getAnnIds(image_id, catIds=[1])
+                    gt_ann = coco_gt.loadAnns(ann_ids)[0]
+                    gt_kps = np.array(gt_ann['keypoints'], dtype=np.float32).reshape(17, 3)
+
+                    # 3) 准备单张图像 Tensor，BGR→RGB，HxWx3→3xHxW，uint8→on cuda
+                    img_rgb = cv2.cvtColor(orig_bgr, cv2.COLOR_BGR2RGB)
+                    img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1).to(dtype=torch.uint8)
+
+                    # 4) 第一次绘制：绿色真值
+                    wb_gt = draw_pose_on_image(img_tensor,
+                                               torch.from_numpy(gt_kps),
+                                               color=(0, 255, 0))
+                    # 从 wandb.Image 获取底层 numpy 图
+                    # wandb.Image 对象 .image 属性 即为 numpy 数组（HxWx3）
+                    gt_np = wb_gt.image
+                    # 转回 RGB Tensor on cuda
+                    gt_tensor = torch.from_numpy(gt_np).permute(2, 0, 1).to(dtype=torch.uint8)
+
+                    # 5) 第二次绘制：红色预测
+                    wb_pred = draw_pose_on_image(gt_tensor,
+                                                 preds[i],
+                                                 color=(255, 0, 0))
+
+                    # 6) 最终结果加入列表
+                    viz_images.append(wb_pred)
+
+    # COCOeval
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, iouType='keypoints')
     coco_eval.evaluate()
@@ -89,8 +109,6 @@ def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
     coco_eval.summarize()
     mAP, AP50 = float(coco_eval.stats[0]), float(coco_eval.stats[1])
 
-    # 恢复模型状态
     if was_train:
         model.train()
-
     return mAP, AP50, viz_images

@@ -10,7 +10,7 @@ from networks.Joint_Pose import JointPoseNet
 from utils.network_utils import HeatmapMSELoss
 
 from utils.dataset_util.coco import COCOPoseDataset
-from utils import get_config, train_one_epoch
+from utils import get_config, train_one_epoch, evaluate
 
 
 def save_checkpoint(state, path):
@@ -94,6 +94,7 @@ def main():
         avg_loss = train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device)
         print(f"Epoch {epoch + 1} finished. Average Loss: {avg_loss:.4f}")
 
+        mean_ap, ap50, vis_images = evaluate(model, val_loader, criterion, device)
 
         # Update best model
         if avg_loss < best_loss:

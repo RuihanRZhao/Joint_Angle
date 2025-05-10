@@ -1,59 +1,61 @@
+import os
+import random
+import torch
+import wandb
+import torchvision
 import cv2
-import numpy as np
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
-# COCO 17 点骨架连接关系（索引基于 COCO keypoints 顺序）
+# COCO 17 骨架连接关系，索引对应 COCO keypoints 顺序
 COCO_SKELETON = [
-    (0,1), (0,2), (1,3), (2,4),
-    (5,6), (5,7), (7,9), (6,8), (8,10),
-    (5,11), (6,12), (11,12),
-    (11,13), (13,15), (12,14), (14,16)
+    (0,1),(0,2),(1,3),(2,4),
+    (1,2),(3,5),(4,6),(5,6),
+    (5,7),(7,9),(6,8),(8,10),
+    (5,11),(6,12),(11,12),(11,13),
+    (13,15),(12,14),(14,16)
 ]
 
 def draw_pose_on_image(
-    image: np.ndarray,
-    pred_kps: np.ndarray,
-    gt_kps: np.ndarray,
-    pred_scores: np.ndarray = None,
-    gt_scores: np.ndarray = None
-) -> np.ndarray:
+    image_tensor: torch.Tensor,
+    keypoints: torch.Tensor,
+    color=(0, 255, 0),
+    radius: int = 2,
+    width: int = 3
+) -> wandb.Image:
     """
-    在同一张图像上叠加绘制预测和真值关键点骨架。
+    在单张图像上绘制 COCO 17 点关键点骨架，并返回 wandb.Image。
+
     Args:
-        image: 原始 BGR 图像 (H, W, 3)，uint8。
-        pred_kps: 预测关键点数组 (17, 2)，每行 (x, y)。
-        gt_kps: 真值关键点数组 (17, 2)，每行 (x, y)。
-        pred_scores: 预测关键点置信度 (17,) 或 None。
-        gt_scores: 真值关键点可见性 v (17,) 或 None。
+        image_tensor: torch.Tensor, shape (3, H, W), dtype=uint8, BGR, device='cuda'.
+        keypoints: torch.Tensor, shape (17, 3), (x, y, score), device 同上.
+        color: Union[str, Tuple[int,int,int]], 骨架颜色，BGR 或颜色名，默认绿色.
+        radius: int, 关键点圆点半径.
+        width: int, 骨架连线宽度.
+
     Returns:
-        drawn: 叠加完成后的图像 (H, W, 3)。
+        wandb.Image: 绘制后图像，适合 wandb.log。
     """
-    drawn = image.copy()
-    # 颜色定义：真值红色，预测绿色
-    color_gt = (0, 0, 255)    # BGR 红
-    color_pred = (0, 255, 0)  # BGR 绿
+    if not (isinstance(image_tensor, torch.Tensor) and isinstance(keypoints, torch.Tensor)):
+        raise TypeError("image_tensor 和 keypoints 必须为 torch.Tensor 类型")
+    if image_tensor.device.type != 'cuda' or keypoints.device.type != 'cuda':
+        raise ValueError("输入张量必须放置在 GPU(cuda) 上")
+    if image_tensor.ndim != 3 or image_tensor.shape[0] != 3:
+        raise ValueError("image_tensor 必须为 (3, H, W) 维度")
+    if keypoints.ndim != 2 or keypoints.shape != (17, 3):
+        raise ValueError("keypoints 必须为 (17,3) 维度，格式为 (x, y, score)")
+    if image_tensor.dtype != torch.uint8:
+        raise ValueError("image_tensor 必须为 uint8 类型 (0-255)")
 
-    # 绘制关键点函数
-    def _draw_points(kps, scores, color):
-        for i, (x, y) in enumerate(kps):
-            if scores is None or scores[i] > 0:
-                cv2.circle(drawn, (int(x), int(y)), 3, color, -1)
-
-    # 绘制连线函数
-    def _draw_skeleton(kps, scores, color):
-        for i, j in COCO_SKELETON:
-            xi, yi = kps[i]
-            xj, yj = kps[j]
-            if (scores is None or (scores[i] > 0 and scores[j] > 0)):
-                cv2.line(drawn,
-                         (int(xi), int(yi)),
-                         (int(xj), int(yj)),
-                         color, 2)
-
-    # 真值
-    _draw_skeleton(gt_kps, gt_scores, color_gt)
-    _draw_points(  gt_kps, gt_scores, color_gt)
-    # 预测
-    _draw_skeleton(pred_kps, pred_scores, color_pred)
-    _draw_points(  pred_kps, pred_scores, color_pred)
-
-    return drawn
+    img_batch = image_tensor.unsqueeze(0)
+    kps = keypoints[:, :2].round().long().unsqueeze(0)
+    drawn = torchvision.utils.draw_keypoints(
+        img_batch,
+        kps,
+        connectivity=COCO_SKELETON,
+        colors=color,
+        radius=radius,
+        width=width
+    )
+    img_np = drawn[0].permute(1, 2, 0).cpu().numpy()
+    return wandb.Image(img_np)
