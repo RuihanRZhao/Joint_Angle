@@ -1,46 +1,18 @@
 import os
-
+import time
 import numpy as np
 from PIL import Image
-
-import torch
-from torch.utils.data import Dataset
-
-from torchvision import transforms
-
-from pycocotools.coco import COCO
-
-
-
-
-
 import zipfile
 from tqdm import tqdm
 import requests
 
-import time
-
-from encoder_decoder import keypoints_to_heatmaps
-
-import os
-
-import numpy as np
-from PIL import Image
-
 import torch
 from torch.utils.data import Dataset
-
 from torchvision import transforms
 
 from pycocotools.coco import COCO
 
-import zipfile
-from tqdm import tqdm
-import requests
-
-import time
-
-from encoder_decoder import keypoints_to_heatmaps
+from .encoder_decoder import keypoints_to_heatmaps
 
 class COCOPoseDataset(Dataset):
     """Custom Dataset for COCO keypoint data (single-person)."""
