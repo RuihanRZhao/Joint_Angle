@@ -213,15 +213,18 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
                     raise RuntimeError(f"多次下载 {fname} 失败，请检查网络或手动下载安装：{url}")
 
         # 解压 zip
-        print(f"[COCO] 解压 {zip_path} → {target_folder}")
+        print(f"[COCO] Unzip {zip_path} → {target_folder}")
+
         try:
             with zipfile.ZipFile(zip_path, 'r') as z:
-                z.extractall(root)
+                # 获取所有文件的列表
+                file_list = z.namelist()
+
+                # 使用tqdm显示进度
+                with tqdm(total=len(file_list), desc="Unzipping", unit="file") as pbar:
+                    for file in file_list:
+                        z.extract(file, target_folder)
+                        pbar.update(1)
+
         except zipfile.BadZipFile as e:
             raise RuntimeError(f"解压 {zip_path} 失败：{e}")
-
-        # 删除 zip 文件，节省空间
-        try:
-            os.remove(zip_path)
-        except OSError:
-            pass
