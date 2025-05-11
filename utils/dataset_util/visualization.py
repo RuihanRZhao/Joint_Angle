@@ -7,12 +7,17 @@ import numpy as np
 
 # COCO 17 骨架连接关系，索引对应 COCO keypoints 顺序
 COCO_SKELETON = [
-    (0,1),(0,2),(1,3),(2,4),
-    (1,2),(3,5),(4,6),(5,6),
-    (5,7),(7,9),(6,8),(8,10),
-    (5,11),(6,12),(11,12),(11,13),
-    (13,15),(12,14),(14,16)
+  (0,1),(0,2),(1,3),(2,4),    # nose→eyes→ears
+  (0,5),(0,6),               # nose→shoulders
+  (5,7),(7,9),               # left shoulder→elbow→wrist
+  (6,8),(8,10),              # right shoulder→elbow→wrist
+  (5,6),                     # 两肩
+  (11,12),                   # 两髋
+  (5,11),(6,12),             # shoulder→hip
+  (11,13),(13,15),           # left hip→knee→ankle
+  (12,14),(14,16)            # right hip→knee→ankle
 ]
+
 
 def _to_tensor_and_meta(image):
     """
