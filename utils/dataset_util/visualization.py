@@ -95,7 +95,7 @@ def _to_original_format(drawn_tensor, input_is_numpy, batch_dim):
     else:
         return drawn_tensor
 
-def draw_pose_on_image(image, keypoints, color=(255, 0, 0)):
+def draw_pose_on_image(image, keypoints, color):
     """
     在单张 RGB 图像上绘制人体关键点，返回与输入 image 相同类型和形状的数据。
 
