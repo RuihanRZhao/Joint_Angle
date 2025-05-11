@@ -122,6 +122,9 @@ def batch_heatmaps_to_keypoints(heatmaps_batch):
     # 找到每个关节热图的最大值以及索引
     max_vals, max_idxs = torch.max(heatmaps_flat, dim=2)  # (B, J)
 
+    print(max_vals.shape)
+    print(max_idxs.shape)
+
     # 计算 x, y 坐标：索引展开回2D平面的位置
     preds = torch.zeros((B, J, 2), device=device, dtype=torch.float32)
     preds[..., 0] = (max_idxs % W).float()  # x = idx mod W
