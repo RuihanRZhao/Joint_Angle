@@ -124,10 +124,13 @@ def draw_pose_on_image(image,
 
 if __name__ == "__main__":
     import os
+    import random
     import argparse
-    import cv2
     import numpy as np
+    import cv2
+    import torch
     from pycocotools.coco import COCO
+    from utils.dataset_util.visualization import draw_pose_on_image
 
     # 引入本模块的绘图函数
     from visualization import draw_pose_on_image
@@ -148,42 +151,38 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # 创建输出目录
-    os.makedirs(args.out_dir, exist_ok=True)
-
-    # 加载 COCO 骨架关键点注释
     ann_path = os.path.join(args.data_root, args.ann_file)
     coco = COCO(ann_path)
-    img_dir = os.path.join(args.data_root, args.img_dir)
 
-    # 随机挑选若干张图
-    img_ids = coco.getImgIds(catIds=[1])
-    np.random.shuffle(img_ids)
-    img_ids = img_ids[: args.num]
+    # 2. 获取图像 ID 列表，随机挑一张
+    img_ids = coco.getImgIds()
+    image_id = random.choice(img_ids)
+    img_info = coco.loadImgs(image_id)[0]
+    img_path = os.path.join(args.data_root, args.img_dir, img_info['file_name'])
 
-    for img_id in img_ids:
-        img_info = coco.loadImgs(img_id)[0]
-        img_path = os.path.join(img_dir, img_info["file_name"])
-        img_bgr = cv2.imread(img_path)
-        if img_bgr is None:
-            print(f"无法读取图像：{img_path}")
-            continue
-        # 转为 RGB ndarray
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    # 3. 加载图像
+    image = cv2.imread(img_path)
+    assert image is not None, f"无法读取图像: {img_path}"
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # OpenCV 默认是 BGR
 
-        # 只取第一个人（单人姿态）
-        ann_ids = coco.getAnnIds(imgIds=[img_id], catIds=[1])
-        anns = coco.loadAnns(ann_ids)
-        if len(anns) == 0:
-            print(f"图像 {img_path} 中没有检测到人员注释")
-            continue
-        kps = np.array(anns[0]["keypoints"], dtype=np.float32).reshape(-1, 3)
+    # 4. 获取对应的 annotation（只取第一个人）
+    ann_ids = coco.getAnnIds(imgIds=image_id, catIds=[1], iscrowd=False)
+    if not ann_ids:
+        print(f"图像 {image_id} 没有人体标注")
+    ann = coco.loadAnns(ann_ids)[0]
+    kps = np.array(ann["keypoints"], dtype=np.float32).reshape(-1, 3)  # [K,3]
 
-        # 绘制关键点和骨架
-        vis, _ = draw_pose_on_image(img_rgb, kps, color=(255, 0, 0))
+    # 5. 绘图（使用 draw_pose_on_image）
+    image_tensor = torch.from_numpy(image_rgb).permute(2, 0, 1).float() / 255  # [3,H,W]
+    vis_img, _ = draw_pose_on_image(image_tensor, torch.from_numpy(kps))
 
-        # 输出结果（vis 是 H×W×3 ndarray，因为输入是 numpy）
-        out_path = os.path.join(args.out_dir, img_info["file_name"])
-        # 转回 BGR 保存
-        vis_bgr = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(out_path, vis_bgr)
-        print(f"Saved visualization for image {img_id} → {out_path}")
+    # 6. 保存结果
+    os.makedirs(args.out_dir, exist_ok=True)
+    out_path = os.path.join(args.out_dir, f"vis_{image_id}.jpg")
+    if isinstance(vis_img, torch.Tensor):
+        vis_np = vis_img.squeeze().permute(1, 2, 0).cpu().numpy() * 255
+        vis_np = vis_np.astype(np.uint8)
+    else:
+        vis_np = vis_img
+    cv2.imwrite(out_path, cv2.cvtColor(vis_np, cv2.COLOR_RGB2BGR))
+    print(f"已保存可视化图像至 {out_path}")

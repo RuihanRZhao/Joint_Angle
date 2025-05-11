@@ -53,7 +53,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
                 bbox = meta['bbox'][i].cpu().numpy()  # [x0,y0,w0,h0]
                 x0, y0, w0, h0 = bbox
 
-                # [MODIFIED] 原始为像素坐标，现在为归一化坐标 [-1, 1]
+                # 模型输出的关键点坐标是归一化坐标 [-1,1]
                 pts = kpts[i]  # shape [17,2] or [17,3]
                 norm_xs = pts[:, 0]
                 norm_ys = pts[:, 1]
@@ -62,14 +62,15 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
                 else:
                     cs = np.ones(17, dtype=np.float32)
 
-                # [MODIFIED] 将归一化坐标 [-1,1] -> 输入图像像素坐标
-                px = (norm_xs + 1.0) / 2.0 * (input_w - 1)
-                py = (norm_ys + 1.0) / 2.0 * (input_h - 1)
+                # 第一步：归一化 [-1,1] -> 输入图像像素坐标
+                px = (norm_xs + 1.0) / 2.0 * input_w
+                py = (norm_ys + 1.0) / 2.0 * input_h
 
-                # [MODIFIED] 输入图像像素坐标 -> 原图坐标
-                xs = (pts[:, 0] + 1.0) / 2.0 * w0 + x0
-                ys = (pts[:, 1] + 1.0) / 2.0 * h0 + y0
+                # 第二步：输入图像像素坐标 -> 原图坐标
+                xs = px / input_w * w0 + x0
+                ys = py / input_h * h0 + y0
 
+                # COCO 格式 keypoints 列表
                 keypoints_list = []
                 for x, y, c in zip(xs, ys, cs):
                     keypoints_list += [float(x), float(y), float(c)]

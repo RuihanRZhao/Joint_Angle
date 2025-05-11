@@ -129,27 +129,28 @@ class COCOPoseDataset(Dataset):
         scale_x = input_w / (w if w != 0 else 1)
         scale_y = input_h / (h if h != 0 else 1)
 
-        keypoints_pixel = keypoints[:, :2].copy()
         keypoints[:, 0] *= scale_x
         keypoints[:, 1] *= scale_y
+
+        keypoints[:, 0] += pad_left
+        keypoints[:, 1] += pad_top
+
+        keypoints_pixel = keypoints.copy()
 
         keypoints[:, 0] = keypoints[:, 0] / (input_w - 1) * 2 - 1
         keypoints[:, 1] = keypoints[:, 1] / (input_h - 1) * 2 - 1
 
         # 生成目标热图和mask（热图大小为输入的1/4）
-        out_w = int(input_w // 4);
+        out_w = int(input_w // 4)
         out_h = int(input_h // 4)
-        target_heatmaps = keypoints_to_heatmaps(keypoints_pixel, output_size=(int(input_h//4), int(input_w//4)), sigma=2)
+        target_heatmaps = keypoints_to_heatmaps(keypoints_pixel, output_size=(out_h, out_w), sigma=2)
         # mask 和 tensor 构建
         mask = np.where(keypoints[:, 2] > 0, 1.0, 0.0).astype(np.float32)
+
         target_heatmaps_tensor = torch.from_numpy(target_heatmaps).to(dtype=torch.float32)
         mask_tensor = torch.from_numpy(mask)
 
-        # 将关键点坐标归一化到 [-1,1] 区间（基于输出热图尺寸）
-        keypoints_norm = keypoints[:, :2].copy()  # 复制关键点的x,y坐标
-        keypoints_norm[:, 0] = (keypoints_norm[:, 0] / (out_w - 1)) * 2 - 1
-        keypoints_norm[:, 1] = (keypoints_norm[:, 1] / (out_h - 1)) * 2 - 1
-        keypoints_tensor = torch.as_tensor(keypoints[:, :2].copy(), dtype=torch.float32)
+        keypoints_tensor = torch.from_numpy(keypoints[:, :2]).to(dtype=torch.float32)
 
         return img_tensor, target_heatmaps_tensor, keypoints_tensor, mask_tensor
 
