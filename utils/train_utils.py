@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
 
-def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, device):
+def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, coord_weight, device):
     """
     单个训练epoch过程，可选AMP混合精度、梯度裁剪和EMA更新。
     参数:
@@ -40,7 +40,7 @@ def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, devic
         # Model output can be tuple (init, refine) or single
         heatmaps_init, heatmaps_refine, keypoints = outputs
         # Compute loss (apply mask if available)
-        loss, loss_detail= criterion(heatmaps_refine, targets_heatmap, keypoints, targets_keypoints, mask, epoch)
+        loss, loss_detail= criterion(heatmaps_refine, targets_heatmap, keypoints, targets_keypoints, mask, coord_weight)
         # Backpropagation and optimizer step
         loss.backward()
         optimizer.step()

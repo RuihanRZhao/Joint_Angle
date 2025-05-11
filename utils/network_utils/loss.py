@@ -55,7 +55,7 @@ class PoseEstimationLoss(nn.Module):
     - 坐标阶段: 直接预测 keypoints 使用 SmoothL1Loss
     - 使用线性 warmup 调度坐标损失权重
     """
-    def __init__(self, coord_loss_weight=1.0, warmup_epochs=15):
+    def __init__(self, coord_loss_weight=1.0):
         """
         coord_loss_weight: 最终坐标损失的权重
         warmup_epochs: 坐标损失权重 warmup 的 epoch 数
@@ -64,7 +64,6 @@ class PoseEstimationLoss(nn.Module):
         self.heatmap_loss = HeatmapMSELoss()
         self.coord_loss = nn.SmoothL1Loss()
         self.coord_weight = coord_loss_weight
-        self.warmup_epochs = warmup_epochs
 
     def forward(self,
                 heatmaps_preds,   # tuple: (heatmap_init, heatmap_refine)
@@ -72,7 +71,7 @@ class PoseEstimationLoss(nn.Module):
                 keypoints_preds,  # tensor: [B, J, 2]
                 keypoints_targets,# tensor: [B, J, 2]
                 mask=None,        # tensor: [B, J]
-                current_epoch=None):
+                coord_weight=None):
         # 1. 计算热图损失
         hm_loss = self.heatmap_loss(heatmaps_preds, heatmaps_targets, mask)
 
@@ -80,8 +79,8 @@ class PoseEstimationLoss(nn.Module):
         coord_loss = self.coord_loss(keypoints_preds, keypoints_targets)
 
         # 3. 动态计算坐标损失权重 (linear warmup)
-        if current_epoch is not None and self.warmup_epochs > 0:
-            gamma = min(current_epoch / float(self.warmup_epochs), 1.0)
+        if coord_weight:
+            gamma = coord_weight
         else:
             gamma = 1.0
 

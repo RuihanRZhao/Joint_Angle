@@ -32,6 +32,22 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None):
     return start_epoch, best_loss
 
 
+def coord_weight_scheduler(epoch: int,
+                           ramp_epochs: int = 60,
+                           power: float = 3.0) -> float:
+    """
+    epoch: 当前 epoch（从 0 开始计数）
+    ramp_epochs: 预计达到 weight=1 的 epoch 数（例如 60）
+    power: 多项式指数，>1 时前期更缓慢，后期更陡峭
+    返回值: 当前 epoch 下 coord_weight ∈ [0,1]
+    """
+    t = epoch / ramp_epochs
+    if t >= 1.0:
+        return 1.0
+    return t ** power
+
+
+
 def main():
     config = get_config()
 
@@ -75,7 +91,7 @@ def main():
     model = JointPoseNet(num_joints=17)  # COCO has 17 joints
 
     model = model.to(device)
-    criterion = PoseEstimationLoss(warmup_epochs=int(config['warmup_pct']*config['epochs']*1.5))
+    criterion = PoseEstimationLoss()
 
     # Initialize optimizer (set initial LR lower, OneCycle will adjust)
     initial_lr = config['learning_rate'] / config['div_factor']
@@ -103,7 +119,9 @@ def main():
     # Training loop
     for epoch in range(start_epoch, config['epochs']):
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
-        total_loss, loss_detail = train_one_epoch(epoch, model, train_loader, criterion, optimizer, scheduler, device)
+        coord_weight = coord_weight_scheduler(epoch)
+
+        total_loss, loss_detail = train_one_epoch(epoch, model, train_loader, criterion, optimizer, scheduler, coord_weight, device)
 
         mean_ap, ap50, vis_images = evaluate(
             model, val_loader,
