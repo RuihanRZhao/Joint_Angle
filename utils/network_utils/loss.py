@@ -85,7 +85,7 @@ class PoseEstimationLoss(nn.Module):
             gamma = 1.0
 
         # 4. 加权求和
-        total_loss = hm_loss + gamma * self.coord_weight * coord_loss
+        total_loss = hm_loss*1000 + gamma * self.coord_weight * coord_loss
 
         return total_loss, {
             'loss_heatmap': hm_loss.item(),
