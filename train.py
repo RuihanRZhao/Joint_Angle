@@ -130,7 +130,7 @@ def main():
             config['input_w'], config['input_h'],
             n_viz=config['n_viz']
         )
-        print(f"Epoch {epoch + 1}: Total Loss: {total_loss:.6f} | Heat Loss{loss_detail['loss_heatmap']:.6f} | Keypoints Loss: {loss_detail['loss_coord']:.6f} | mAP: {mean_ap:.6f} | AP50: {ap50:.6f} | LR: {optimizer.param_groups[0]['lr']}")
+        print(f"Ep {epoch + 1}: Total Loss: {total_loss:.8f} | Heat Loss: {loss_detail['loss_heatmap']:.8f} | Keypoints Loss: {loss_detail['loss_coord']:.8f} | mAP: {mean_ap:.12f} | AP50: {ap50:.12f}")
 
         # Update best model
         if ap50 > best_ap:
