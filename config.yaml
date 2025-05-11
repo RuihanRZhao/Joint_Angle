@@ -10,7 +10,7 @@ input_h: !!int 288
 input_w: !!int 384
 
 epochs: 1000
-batch_size: 64
+batch_size: 128
 learning_rate: !!float 1e-4
 
 # optimizer and scheduler
