@@ -14,62 +14,99 @@ COCO_SKELETON = [
     (13,15),(12,14),(14,16)
 ]
 
-def draw_pose_on_image(
-    image_tensor: torch.Tensor,
-    keypoints: torch.Tensor,
-    color: Tuple[int, int, int],
-    radius: int = 2,
-    width: int = 3
-) -> wandb.Image:
+def _to_tensor_and_meta(image):
     """
-    在单张图像上绘制 COCO 17 点关键点骨架，并返回 wandb.Image。
+    将输入 image 转为 CHW Tensor，并返回元信息：
+      - img_tensor: torch.Tensor, C×H×W
+      - input_is_numpy: bool, 原始输入是否是 numpy.ndarray
+      - batch_dim: bool, 是否原本带有 batch 维度 [1,C,H,W]
+    """
+    input_is_numpy = isinstance(image, np.ndarray)
+    if input_is_numpy:
+        # H×W×C -> C×H×W
+        img_tensor = torch.from_numpy(image).permute(2, 0, 1)
+        batch_dim = False
+    else:
+        img_tensor = image
+        # 若为 [1,C,H,W]，去掉 batch 维度
+        if img_tensor.ndim == 4 and img_tensor.shape[0] == 1:
+            batch_dim = True
+            img_tensor = img_tensor.squeeze(0)
+        else:
+            batch_dim = False
+
+    if img_tensor.ndim != 3 or img_tensor.shape[0] not in (1, 3):
+        raise ValueError(f"_to_tensor_and_meta: 期望 image 为 C×H×W (C=1或3)，但得到 {tuple(img_tensor.shape)}。")
+
+    return img_tensor, input_is_numpy, batch_dim
+
+def _to_keypoint_coords(keypoints):
+    """
+    将 keypoints 转为 shape 为 [1, K, 2] 的坐标 tensor（去掉置信度，添加 batch 维）。
+    支持输入 [K,3]、[1,K,3]、numpy.ndarray 或 torch.Tensor。
+    """
+    if isinstance(keypoints, np.ndarray):
+        kps = torch.from_numpy(keypoints)
+    else:
+        kps = keypoints
+
+    # 去掉多余 batch 维
+    if kps.ndim == 3 and kps.shape[0] == 1:
+        kps = kps.squeeze(0)
+    if kps.ndim != 2 or kps.shape[1] != 3:
+        raise ValueError(f"_to_keypoint_coords: 期望 keypoints 为 [K,3]，但得到 {tuple(kps.shape)}。")
+
+    # 提取 x,y 并扩 batch 维 -> [1, K, 2]
+    coords = kps[:, :2].unsqueeze(0)
+    return coords
+
+def _draw(img_tensor, coords, color):
+    """
+    在单张 C×H×W Tensor 上绘制 keypoints（coords: [1,K,2]），
+    返回同样 shape 的 Tensor。
+    """
+    # torchvision.draw_keypoints 要求 img_tensor 维度为 [C,H,W]，coords 为 [num_instances, K, 2]
+    drawn = torchvision.utils.draw_keypoints(img_tensor, coords, COCO_SKELETON, colors=color)
+    return drawn
+
+def _to_original_format(drawn_tensor, input_is_numpy, batch_dim):
+    """
+    将绘制后的张量还原成和原始输入相同的格式：
+      - 若是 numpy 输入，返回 H×W×C ndarray
+      - 若是 tensor 且带 batch 维，则返回 [1,C,H,W]
+      - 否则返回 [C,H,W] Tensor
+    """
+    # 如果原来有 batch 维，先补回
+    if batch_dim:
+        drawn_tensor = drawn_tensor.unsqueeze(0)
+
+    if input_is_numpy:
+        # CHW -> HWC 或 BCHW -> BHWC，然后去除 batch 维
+        if drawn_tensor.ndim == 4:
+            arr = drawn_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()
+        else:
+            arr = drawn_tensor.permute(1, 2, 0).cpu().numpy()
+        return arr
+    else:
+        return drawn_tensor
+
+def draw_pose_on_image(image, keypoints, color=(255, 0, 0)):
+    """
+    在单张 RGB 图像上绘制人体关键点，返回与输入 image 相同类型和形状的数据。
 
     Args:
-        image_tensor: torch.Tensor, shape (3, H, W), dtype=uint8, BGR, device='cuda'.
-        keypoints: torch.Tensor, shape (17, 3), (x, y, score), device 同上.
-        color: Union[str, Tuple[int,int,int]], 骨架颜色，BGR 或颜色名，默认绿色.
-        radius: int, 关键点圆点半径.
-        width: int, 骨架连线宽度.
+        image:
+          - numpy.ndarray (H, W, 3)
+          - torch.Tensor (3, H, W) 或 (1, 3, H, W)
+        keypoints:
+          - numpy.ndarray (K, 3) 或 torch.Tensor (K, 3)
+          - 或带 batch 维的 (1, K, 3)
+        color: (R, G, B) 整数元组
 
     Returns:
-        wandb.Image: 绘制后图像，适合 wandb.log。
+        与输入 image 格式一致的绘制后图像。
     """
-    # ---- 1) 处理 image ----
-    # 如果是 numpy，先从 HWC 转为 CHW 的 torch.Tensor
-    if isinstance(image_tensor, np.ndarray):
-        img_tensor = torch.from_numpy(image_tensor).permute(2, 0, 1)  # HWC -> CHW
-    else:
-        img_tensor = image_tensor
-
-    # 如果多了 batch 维度（1,3,H,W），去掉它
-    if isinstance(img_tensor, torch.Tensor) and img_tensor.ndim == 4:
-        img_tensor = img_tensor.squeeze(0)
-
-    # 最终应为 3 维 (C, H, W)
-    if not (isinstance(img_tensor, torch.Tensor) and img_tensor.ndim == 3):
-        raise ValueError(f"draw_pose_on_image: 期望 image 为 3 维张量 (C,H,W)，但得到 {img_tensor.ndim} 维。")
-
-    # ---- 2) 处理 keypoints ----
-    if isinstance(keypoints, np.ndarray):
-        kps_tensor = torch.from_numpy(keypoints)
-    else:
-        kps_tensor = keypoints
-
-    # 去掉 batch 维度 if present: [1,K,3] -> [K,3]
-    if isinstance(kps_tensor, torch.Tensor) and kps_tensor.ndim == 3 and kps_tensor.shape[0] == 1:
-        kps_tensor = kps_tensor.squeeze(0)
-
-    if not (isinstance(kps_tensor, torch.Tensor) and kps_tensor.ndim == 2 and kps_tensor.shape[1] == 3):
-        raise ValueError(
-            f"draw_pose_on_image: 期望 keypoints 为 [num_joints,3]，但得到形状 {tuple(kps_tensor.shape)}。")
-
-    # 提取 x,y 坐标，并添加 batch 维度 -> shape [1, num_joints, 2]
-    coords = kps_tensor[:, :2].unsqueeze(0)
-
-    # ---- 3) 绘制关键点 ----
-    # colors 接受 list of RGB tuples，长度应与 num_instances 一致(这里只有 1 个实例)
-    drawn = torchvision.utils.draw_keypoints(img_tensor, coords, colors=color)
-
-    # ---- 4) 转回 numpy H×W×3 并包装 wandb.Image ----
-    drawn_np = drawn.permute(1, 2, 0).cpu().numpy()  # CHW -> HWC
-    return wandb.Image(drawn_np)
+    img_tensor, is_numpy, has_batch = _to_tensor_and_meta(image)
+    coords = _to_keypoint_coords(keypoints)
+    drawn = _draw(img_tensor, coords, color)
+    return _to_original_format(drawn, is_numpy, has_batch)
