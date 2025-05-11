@@ -62,6 +62,15 @@ def main():
 
     # Model, criterion, optimizer, scheduler
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    print(f"============ CONFIG ============")
+    for key, data in config.items():
+        print(f"  {key:15} = {data}")
+
+    print(f"  {'train_sample':15} = {len(train_dataset)}")
+    print(f"  {'eval_sample':15} = {len(val_dataset)}")
+    print(f"  {'device':15} = {device}")
+    print(f"================================")
     model = JointPoseNet(num_joints=17)  # COCO has 17 joints
 
     # Note: If Joint_Pose.py forward uses variable 'heatmap1', ensure it is corrected to 'heatmap_init'
