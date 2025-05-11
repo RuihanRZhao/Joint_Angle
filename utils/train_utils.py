@@ -22,8 +22,9 @@ def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, devic
     epoch_loss_detail = {
         'loss_heatmap': 0.0,
         'loss_coord': 0.0,
+        'coord_weight': 0.0
     }
-    coord_weight = None
+
     # Iterate over training set
     for i, batch in tqdm(enumerate(loader), desc="Training", total=len(loader), unit="batch"):
         # Unpack batch to images, targets (and mask if provided)
@@ -49,7 +50,7 @@ def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, devic
         epoch_loss += loss.item() * images.size(0)
         epoch_loss_detail['loss_heatmap'] += loss_detail['loss_heatmap']
         epoch_loss_detail['loss_coord'] += loss_detail['loss_coord']*loss_detail['coord_weight']
-        coord_weight = loss_detail['coord_weight']
+        epoch_loss_detail['coord_weight'] = loss_detail['coord_weight']
 
-    epoch_loss_detail.update({'coord_weight': coord_weight})
+
     return epoch_loss, epoch_loss_detail
