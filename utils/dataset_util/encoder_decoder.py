@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-def keypoints_to_heatmaps(keypoints, heatmap_height, heatmap_width, sigma=2):
+def keypoints_to_heatmaps(keypoints, output_size, sigma=2):
     """
     将关键点坐标转换为高斯热图。
     参数:
@@ -12,6 +12,8 @@ def keypoints_to_heatmaps(keypoints, heatmap_height, heatmap_width, sigma=2):
     返回:
         heatmaps: numpy数组，形状为 (num_keypoints, heatmap_height, heatmap_width)，每个关键点对应一个热图。
     """
+    heatmap_height, heatmap_width = output_size
+
     num_keypoints = len(keypoints)
     # 将关键点列表转换为浮点数组，以便计算
     keypoints_arr = np.array(keypoints, dtype=float)
