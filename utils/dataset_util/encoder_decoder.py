@@ -1,84 +1,99 @@
 import torch
+import numpy as np
 
-def keypoints_to_heatmaps(keypoints, output_size, sigma):
+def keypoints_to_heatmaps(keypoints, heatmap_height, heatmap_width, sigma=2):
     """
-    将单张图像的 COCO 格式关键点转换为热图表示。
-    Args:
-        keypoints: 形状 (17, 3) 的关键点坐标和可见性，其中每一行为 (x, y, v)。
-        output_size: 输出热图大小，可以是(int H, int W)元组或单个int（正方形边长）。
-        sigma: 高斯分布的标准差（像素）。
-    Returns:
-        heatmaps: torch.Tensor，形状 (17, H, W)，每个通道为对应关键点的高斯热图。
+    将关键点坐标转换为高斯热图。
+    参数:
+        keypoints: 形状为 (num_keypoints, 2) 或 (num_keypoints, 3) 的数组，包含关键点原图像像素坐标（以及可选的可见性标志）。
+        heatmap_height: 输出热图的高度。
+        heatmap_width: 输出热图的宽度。
+        sigma: 高斯分布的标准差（热图坐标尺度下）。
+    返回:
+        heatmaps: numpy数组，形状为 (num_keypoints, heatmap_height, heatmap_width)，每个关键点对应一个热图。
     """
-    # 解析输出尺寸
-    if isinstance(output_size, int):
-        H = W = output_size
-    else:
-        H, W = output_size
-    # 将关键点数据转换为张量 (在原设备上)，数据类型为浮点
-    if isinstance(keypoints, torch.Tensor):
-        device = keypoints.device
-        kps = keypoints.to(dtype=torch.float32)
-    else:
-        device = torch.device('cpu')
-        kps = torch.as_tensor(keypoints, dtype=torch.float32, device=device)
-    # 如果只有两列坐标，没有提供可见性，则默认都可见
-    if kps.shape[-1] == 2:
-        vis = torch.ones(kps.shape[0], device=device)
-        kps = torch.cat([kps, vis.unsqueeze(1)], dim=1)
-    # 利用 batch 接口生成 (1,17,H,W) 热图，再去除批维度
-    heatmaps = batch_keypoints_to_heatmaps(kps.unsqueeze(0), (H, W), sigma)
-    return heatmaps[0]  # 返回 (17,H,W)
+    num_keypoints = len(keypoints)
+    # 将关键点列表转换为浮点数组，以便计算
+    keypoints_arr = np.array(keypoints, dtype=float)
+    # 初始化热图张量
+    heatmaps = np.zeros((num_keypoints, heatmap_height, heatmap_width), dtype=np.float32)
+    if num_keypoints == 0:
+        return heatmaps  # 无关键点则直接返回空热图
 
-def batch_keypoints_to_heatmaps(keypoints_batch, output_size, sigma):
-    """
-    将一批图像的关键点转换为热图。
-    Args:
-        keypoints_batch: 形状 (B, 17, 3) 的关键点张量或数组。
-        output_size: 输出热图大小 (H, W) 或单个整数（正方形）。
-        sigma: 高斯标准差。
-    Returns:
-        heatmaps_batch: torch.Tensor，形状 (B, 17, H, W) 的热图张量。
-    """
-    # 解析输出尺寸
-    if isinstance(output_size, int):
-        H = W = output_size
-    else:
-        H, W = output_size
-    # 转换关键点批次为张量
-    if isinstance(keypoints_batch, torch.Tensor):
-        device = keypoints_batch.device
-        kps = keypoints_batch.to(dtype=torch.float32)
-    else:
-        device = torch.device('cpu')
-        kps = torch.as_tensor(keypoints_batch, dtype=torch.float32, device=device)
-    B, J, _ = kps.shape  # B批大小, J=17关键点个数
-    # 若关键点不包含可见性列，则补上一列全1（表示全部可见）
-    if kps.shape[-1] == 2:
-        vis = torch.ones(B, J, device=device)
-        kps = torch.cat([kps, vis.unsqueeze(2)], dim=2)
-    # 拆分坐标和可见性
-    x = kps[..., 0]  # (B, J)
-    y = kps[..., 1]  # (B, J)
-    v = kps[..., 2]  # (B, J)
-    # 创建输出热图张量，初始化为0
-    heatmaps = torch.zeros((B, J, H, W), device=device, dtype=torch.float32)
-    if B == 0:
-        return heatmaps  # 空批次直接返回
-    # 构造坐标网格 (H, W)
-    yy = torch.arange(H, device=device, dtype=torch.float32).view(H, 1)
-    xx = torch.arange(W, device=device, dtype=torch.float32).view(1, W)
-    # 利用广播计算每个关节高斯：exp(-((X-x)^2 + (Y-y)^2) / (2*sigma^2))
-    # 在这里，我们将 x, y 张量扩展为形状 (B, J, H, W)，与坐标网格进行运算
-    x = x.view(B, J, 1, 1)
-    y = y.view(B, J, 1, 1)
-    # (B,J,H,W) = ((1,1,H,W) - (B,J,1,1))^2 + similarly for Y
-    dist_sq = (xx - x)**2 + (yy - y)**2
-    gauss = torch.exp(-dist_sq / (2 * (sigma ** 2)))
-    # 将不可见的关键点对应的高斯图置零
-    mask = (v > 0).view(B, J, 1, 1).to(dtype=torch.float32)
-    heatmaps = gauss * mask
+    # **按比例将原图坐标缩放到热图坐标系**（假设已知原图尺寸为 input_height, input_width）
+    # 这里假设原图尺寸与热图尺寸的比例是恒定的。例如原图宽度=input_width，热图宽度=heatmap_width。
+    # 如果原图尺寸未知，可根据数据集配置或上下文获取。以下示例假设下采样比例为 input_width/heatmap_width。
+    input_width = heatmap_width * (1 if heatmap_width == 0 else (keypoints_arr[:, 0].max() / (heatmap_width - 1) if heatmap_width > 1 else 1))
+    input_height = heatmap_height * (1 if heatmap_height == 0 else (keypoints_arr[:, 1].max() / (heatmap_height - 1) if heatmap_height > 1 else 1))
+    # 计算缩放比例（热图尺寸 / 原图尺寸）
+    scale_x = heatmap_width / input_width
+    scale_y = heatmap_height / input_height
+
+    radius = int(3 * sigma)
+    diameter = 2 * radius + 1
+    # 预先计算高斯核(直径x直径)，中心位于 (radius, radius)
+    x = np.arange(diameter) - radius
+    y = x[:, np.newaxis]
+    gaussian_patch = np.exp(-(x**2 + y**2) / (2 * sigma * sigma))
+
+    for i, kp in enumerate(keypoints_arr):
+        # 如果提供了可见性标志且关键点不可见，则跳过绘制
+        if kp.shape and len(kp) > 2:
+            v = kp[2]
+            if v < 0.5:
+                continue
+        x_orig, y_orig = kp[0], kp[1]
+        # 跳过无效坐标
+        if x_orig < 0 or y_orig < 0:
+            continue
+        # **将原图坐标按比例缩放到热图坐标**
+        mu_x = int(x_orig * scale_x + 0.5)
+        mu_y = int(y_orig * scale_y + 0.5)
+        # 如果缩放后超出热图范围则跳过
+        if mu_x < 0 or mu_x >= heatmap_width or mu_y < 0 or mu_y >= heatmap_height:
+            continue
+
+        # 计算高斯放置的边界坐标（ul为左上角，br为右下角的下一个索引）
+        ul_x = mu_x - radius
+        ul_y = mu_y - radius
+        br_x = mu_x + radius + 1
+        br_y = mu_y + radius + 1
+
+        # 将边界裁剪到热图范围内
+        img_x_min = max(0, ul_x)
+        img_y_min = max(0, ul_y)
+        img_x_max = min(heatmap_width, br_x)
+        img_y_max = min(heatmap_height, br_y)
+        # 计算高斯核对应的裁剪区域
+        patch_x_min = max(0, -ul_x)
+        patch_y_min = max(0, -ul_y)
+        patch_x_max = patch_x_min + (img_x_max - img_x_min)
+        patch_y_max = patch_y_min + (img_y_max - img_y_min)
+        # 将高斯核区域贴到热图上
+        heatmaps[i, img_y_min:img_y_max, img_x_min:img_x_max] = np.maximum(
+            heatmaps[i, img_y_min:img_y_max, img_x_min:img_x_max],
+            gaussian_patch[patch_y_min:patch_y_max, patch_x_min:patch_x_max]
+        )
     return heatmaps
+
+def batch_keypoints_to_heatmaps(batch_keypoints, heatmap_height, heatmap_width, sigma=2):
+    """
+    将一批样本的关键点集合转换为对应的高斯热图批次。
+    参数:
+        batch_keypoints: 可迭代对象，每个元素是一个样本的关键点数组（形状为 (num_keypoints, 2) 或 (num_keypoints, 3)）。
+        heatmap_height: 输出热图的高度。
+        heatmap_width: 输出热图的宽度。
+        sigma: 高斯分布的标准差。
+    返回:
+        batch_heatmaps: numpy数组，形状为 (batch_size, num_keypoints, heatmap_height, heatmap_width)。
+    """
+    heatmaps_list = []
+    for keypoints in batch_keypoints:
+        heatmaps = keypoints_to_heatmaps(keypoints, heatmap_height, heatmap_width, sigma)
+        heatmaps_list.append(heatmaps)
+    # 将列表转换为批次张量
+    batch_heatmaps = np.stack(heatmaps_list, axis=0)
+    return batch_heatmaps
 
 def heatmaps_to_keypoints(heatmaps):
     """

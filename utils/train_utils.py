@@ -49,7 +49,7 @@ def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, coord
             scheduler.step()
         epoch_loss += loss.item() * images.size(0)
         epoch_loss_detail['loss_heatmap'] += loss_detail['loss_heatmap']
-        epoch_loss_detail['loss_coord'] += loss_detail['loss_coord']*loss_detail['coord_weight']
+        epoch_loss_detail['loss_coord'] += loss_detail['loss_coord']
         epoch_loss_detail['coord_weight'] = loss_detail['coord_weight']
 
 
