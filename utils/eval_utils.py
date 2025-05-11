@@ -29,7 +29,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
     device = next(model.parameters()).device
 
     # COCO GT
-    coco_gt = getattr(val_loader.dataset, 'coco', COCO(ann_file))
+    coco_gt = val_loader.dataset.coco if hasattr(val_loader.dataset, 'coco') else COCO(os.path.join("run/single_person", ann_file))
     results = []
     viz_images = []
 
