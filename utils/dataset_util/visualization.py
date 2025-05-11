@@ -53,21 +53,21 @@ def draw_pose_on_image(
     else:
         kps_tensor = keypoints
 
-    # 如果多了 batch 维度 (1, num_joints, 3)，去掉它
+    # 去掉 batch 维度 if present: [1,K,3] -> [K,3]
     if isinstance(kps_tensor, torch.Tensor) and kps_tensor.ndim == 3 and kps_tensor.shape[0] == 1:
         kps_tensor = kps_tensor.squeeze(0)
 
-    # 最终应为 [num_joints, 3]
     if not (isinstance(kps_tensor, torch.Tensor) and kps_tensor.ndim == 2 and kps_tensor.shape[1] == 3):
-        raise ValueError(f"draw_pose_on_image: 期望 keypoints 为 [num_joints,3]，但得到形状 {tuple(kps_tensor.shape)}。")
+        raise ValueError(
+            f"draw_pose_on_image: 期望 keypoints 为 [num_joints,3]，但得到形状 {tuple(kps_tensor.shape)}。")
 
-    drawn = torchvision.utils.draw_keypoints(
-        img_tensor,
-        kps_tensor,
-        connectivity=COCO_SKELETON,
-        colors=color,
-        radius=radius,
-        width=width
-    )
-    img_np = drawn[0].permute(1, 2, 0).cpu().numpy()
-    return wandb.Image(img_np)
+    # 提取 x,y 坐标，并添加 batch 维度 -> shape [1, num_joints, 2]
+    coords = kps_tensor[:, :2].unsqueeze(0)
+
+    # ---- 3) 绘制关键点 ----
+    # colors 接受 list of RGB tuples，长度应与 num_instances 一致(这里只有 1 个实例)
+    drawn = torchvision.utils.draw_keypoints(img_tensor, coords, colors=[color])
+
+    # ---- 4) 转回 numpy H×W×3 并包装 wandb.Image ----
+    drawn_np = drawn.permute(1, 2, 0).cpu().numpy()  # CHW -> HWC
+    return wandb.Image(drawn_np)

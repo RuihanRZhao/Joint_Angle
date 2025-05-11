@@ -54,6 +54,5 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, device):
         if scheduler:
             scheduler.step()
         epoch_loss += loss.item() * images.size(0)
-    # Compute average loss over dataset
-    epoch_loss = epoch_loss / len(loader.dataset)
+
     return epoch_loss
