@@ -109,4 +109,5 @@ def draw_pose_on_image(image, keypoints, color=(255, 0, 0)):
     img_tensor, is_numpy, has_batch = _to_tensor_and_meta(image)
     coords = _to_keypoint_coords(keypoints)
     drawn = _draw(img_tensor, coords, color)
-    return _to_original_format(drawn, is_numpy, has_batch)
+
+    return _to_original_format(drawn, is_numpy, has_batch), wandb.Image(drawn.permute(1, 2, 0).cpu().numpy())
