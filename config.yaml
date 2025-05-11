@@ -20,7 +20,7 @@ learning_rate: !!float 3e-4
 div_factor: !!float 25.0
 warmup_pct: !!float 0.01
 
-n_vis: 6
+n_viz: 6
 
 num_workers_train: 16
 num_workers_val: 8
