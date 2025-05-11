@@ -31,7 +31,17 @@ class COCOPoseDataset(Dataset):
         img_dir: directory containing the images (e.g., train2017 folder)
         max_samples: 如果指定，则只保留前 N 条 annotation，用于快速调试或小规模训练
         """
-        # …（前面代码保持不变）…
+        ann_path = os.path.join(root, ann_file)
+        if not os.path.isfile(ann_path):
+            raise RuntimeError(f"找不到注解文件：{ann_path}")
+        self.coco = COCO(ann_path)
+
+        self.img_dir = os.path.join(root, img_dir)
+        if not os.path.isdir(self.img_dir):
+            raise RuntimeError(f"找不到图像目录：{self.img_dir}")
+
+        self.input_size = tuple(input_size)
+        self.transform = transform
 
         # Gather all person annotations with keypoints
         self.annotations = []
