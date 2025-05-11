@@ -111,7 +111,6 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
                                                    color=(255,0,0),
                                                    use_wandb=True)
                     viz_images.append(wb_pred)
-                    print(pred_kpts, heatmap)
 
     # COCO 评估
     coco_dt = coco_gt.loadRes(results)

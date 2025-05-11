@@ -41,10 +41,10 @@ def coord_weight_scheduler(epoch: int,
     power: 多项式指数，>1 时前期更缓慢，后期更陡峭
     返回值: 当前 epoch 下 coord_weight ∈ [0,1]
     """
-    t = epoch / ramp_epochs
-    if t >= 1.0:
+
+    if epoch > ramp_epochs:
         return 1.0
-    return t ** power
+    return 0
 
 
 
