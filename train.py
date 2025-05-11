@@ -35,7 +35,7 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None):
 def main():
     config = get_config()
 
-    wandb.init(project="Multi_Pose", config=config)
+    wandb.init(project="Joint_Pose", config=config)
 
     # Parse input size
     input_size = (config['input_w'], config['input_h'])
