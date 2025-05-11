@@ -35,7 +35,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
     total_samples = len(val_loader.dataset)
     viz_idxs = set(random.sample(range(total_samples), min(n_viz, total_samples)))
     with torch.no_grad():
-        for batch_idx, (images, meta) in tqdm(enumerate(val_loader), desc="Training", total=len(val_loader), unit="batch"):
+        for batch_idx, (images, meta) in tqdm(enumerate(val_loader), desc="Evaluating", total=len(val_loader), unit="batch"):
             images = images.to(device)
             outputs = model(images)
             heatmaps = outputs[-1] if isinstance(outputs, (list, tuple)) else outputs

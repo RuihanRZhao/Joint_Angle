@@ -36,22 +36,38 @@ def draw_pose_on_image(
     Returns:
         wandb.Image: 绘制后图像，适合 wandb.log。
     """
-    if not (isinstance(image_tensor, torch.Tensor) and isinstance(keypoints, torch.Tensor)):
-        raise TypeError("image_tensor 和 keypoints 必须为 torch.Tensor 类型")
-    if image_tensor.device.type != 'cuda' or keypoints.device.type != 'cuda':
-        raise ValueError("输入张量必须放置在 GPU(cuda) 上")
-    if image_tensor.ndim != 3 or image_tensor.shape[0] != 3:
-        raise ValueError("image_tensor 必须为 (3, H, W) 维度")
-    if keypoints.ndim != 2 or keypoints.shape != (17, 3):
-        raise ValueError("keypoints 必须为 (17,3) 维度，格式为 (x, y, score)")
-    if image_tensor.dtype != torch.uint8:
-        raise ValueError("image_tensor 必须为 uint8 类型 (0-255)")
+    # ---- 1) 处理 image ----
+    # 如果是 numpy，先从 HWC 转为 CHW 的 torch.Tensor
+    if isinstance(image, np.ndarray):
+        img_tensor = torch.from_numpy(image).permute(2, 0, 1)  # HWC -> CHW
+    else:
+        img_tensor = image
 
-    img_batch = image_tensor.unsqueeze(0)
-    kps = keypoints[:, :2].round().long().unsqueeze(0)
+    # 如果多了 batch 维度（1,3,H,W），去掉它
+    if isinstance(img_tensor, torch.Tensor) and img_tensor.ndim == 4:
+        img_tensor = img_tensor.squeeze(0)
+
+    # 最终应为 3 维 (C, H, W)
+    if not (isinstance(img_tensor, torch.Tensor) and img_tensor.ndim == 3):
+        raise ValueError(f"draw_pose_on_image: 期望 image 为 3 维张量 (C,H,W)，但得到 {img_tensor.ndim} 维。")
+
+    # ---- 2) 处理 keypoints ----
+    if isinstance(keypoints, np.ndarray):
+        kps_tensor = torch.from_numpy(keypoints)
+    else:
+        kps_tensor = keypoints
+
+    # 如果多了 batch 维度 (1, num_joints, 3)，去掉它
+    if isinstance(kps_tensor, torch.Tensor) and kps_tensor.ndim == 3 and kps_tensor.shape[0] == 1:
+        kps_tensor = kps_tensor.squeeze(0)
+
+    # 最终应为 [num_joints, 3]
+    if not (isinstance(kps_tensor, torch.Tensor) and kps_tensor.ndim == 2 and kps_tensor.shape[1] == 3):
+        raise ValueError(f"draw_pose_on_image: 期望 keypoints 为 [num_joints,3]，但得到形状 {tuple(kps_tensor.shape)}。")
+
     drawn = torchvision.utils.draw_keypoints(
-        img_batch,
-        kps,
+        img_tensor,
+        kps_tensor,
         connectivity=COCO_SKELETON,
         colors=color,
         radius=radius,
