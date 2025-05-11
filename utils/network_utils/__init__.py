@@ -1,1 +1,1 @@
-from .loss import HeatmapMSELoss
+from .loss import HeatmapMSELoss, PoseEstimationLoss

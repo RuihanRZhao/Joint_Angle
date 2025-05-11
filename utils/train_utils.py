@@ -1,11 +1,7 @@
 import torch
-from torch.cuda.amp import autocast, GradScaler
-import torch.nn.utils as torch_utils
-import copy
-import wandb
 from tqdm import tqdm
 
-def train_one_epoch(model, loader, criterion, optimizer, scheduler, device):
+def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, device):
     """
     单个训练epoch过程，可选AMP混合精度、梯度裁剪和EMA更新。
     参数:
@@ -26,11 +22,7 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, device):
     # Iterate over training set
     for i, batch in tqdm(enumerate(loader), desc="Training", total=len(loader), unit="batch"):
         # Unpack batch to images, targets (and mask if provided)
-        if isinstance(batch, (tuple, list)) and len(batch) == 3:
-            images, targets, mask = batch
-        else:
-            images, targets = batch
-            mask = None
+        images, targets_heatmap, targets_keypoints, mask = batch
         images = images.to(device)
         targets = targets.to(device)
         if mask is not None:
@@ -39,14 +31,9 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, device):
         # Forward pass
         outputs = model(images)
         # Model output can be tuple (init, refine) or single
-        if isinstance(outputs, (tuple, list)):
-            heatmaps_init, heatmaps_refine = outputs
-        else:
-            heatmaps_init, heatmaps_refine = outputs, None
+        heatmaps_init, heatmaps_refine, keypoints = outputs
         # Compute loss (apply mask if available)
-        loss_init = criterion(heatmaps_init, targets, mask) if mask is not None else criterion(heatmaps_init, targets)
-        loss_refine = criterion(heatmaps_refine, targets, mask) if heatmaps_refine is not None else 0
-        loss = loss_init + (loss_refine if isinstance(loss_refine, torch.Tensor) else 0)
+        loss= criterion(heatmaps_refine, targets_heatmap, keypoints, targets_keypoints, mask, epoch)
         # Backpropagation and optimizer step
         loss.backward()
         optimizer.step()

@@ -139,7 +139,9 @@ class COCOPoseDataset(Dataset):
         else:
             target_heatmaps_tensor = torch.from_numpy(target_heatmaps).to(dtype=torch.float32)
         mask_tensor = torch.from_numpy(mask)
-        return img_tensor, target_heatmaps_tensor, mask_tensor
+
+        keypoints_tensor = torch.as_tensor(keypoints[:, :2].copy(), dtype=torch.float32)
+        return img_tensor, target_heatmaps_tensor, keypoints_tensor, mask_tensor
 
     def __len__(self):
         return len(self.annotations)

@@ -7,7 +7,7 @@ from torch.optim.lr_scheduler import OneCycleLR
 import wandb
 
 from networks.Joint_Pose import JointPoseNet
-from utils.network_utils import HeatmapMSELoss
+from utils.network_utils import PoseEstimationLoss
 
 from utils.dataset_util.coco import COCOPoseDataset
 from utils import get_config, train_one_epoch, evaluate
@@ -75,7 +75,7 @@ def main():
     model = JointPoseNet(num_joints=17)  # COCO has 17 joints
 
     model = model.to(device)
-    criterion = HeatmapMSELoss()
+    criterion = PoseEstimationLoss(warmup_epochs=int(config['warmup_pct']*config['epochs']*1.5))
 
     # Initialize optimizer (set initial LR lower, OneCycle will adjust)
     initial_lr = config['learning_rate'] / config['div_factor']
@@ -103,7 +103,7 @@ def main():
     # Training loop
     for epoch in range(start_epoch, config['epochs']):
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
-        total_loss = train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device)
+        total_loss = train_one_epoch(epoch, model, train_loader, criterion, optimizer, scheduler, device)
 
         mean_ap, ap50, vis_images = evaluate(
             model, val_loader,

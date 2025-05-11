@@ -47,3 +47,49 @@ class HeatmapMSELoss(nn.Module):
             # 若无mask，直接计算全图平均MSE
             loss = (diff ** 2).mean()
         return loss
+
+class PoseEstimationLoss(nn.Module):
+    """
+    综合热图回归与坐标回归的多任务损失:
+    - 热图阶段: heatmap_init & heatmap_refine 使用 MSELoss
+    - 坐标阶段: 直接预测 keypoints 使用 SmoothL1Loss
+    - 使用线性 warmup 调度坐标损失权重
+    """
+    def __init__(self, coord_loss_weight=1.0, warmup_epochs=15):
+        """
+        coord_loss_weight: 最终坐标损失的权重
+        warmup_epochs: 坐标损失权重 warmup 的 epoch 数
+        """
+        super(PoseEstimationLoss, self).__init__()
+        self.heatmap_loss = HeatmapMSELoss()
+        self.coord_loss = nn.SmoothL1Loss()
+        self.coord_weight = coord_loss_weight
+        self.warmup_epochs = warmup_epochs
+
+    def forward(self,
+                heatmaps_preds,   # tuple: (heatmap_init, heatmap_refine)
+                heatmaps_targets, # tensor: [B, J, H, W]
+                keypoints_preds,  # tensor: [B, J, 2]
+                keypoints_targets,# tensor: [B, J, 2]
+                mask=None,        # tensor: [B, J]
+                current_epoch=None):
+        # 1. 计算热图损失
+        hm_loss = self.heatmap_loss(heatmaps_preds, heatmaps_targets, mask)
+
+        # 2. 计算坐标回归损失
+        coord_loss = self.coord_loss(keypoints_preds, keypoints_targets)
+
+        # 3. 动态计算坐标损失权重 (linear warmup)
+        if current_epoch is not None and self.warmup_epochs > 0:
+            gamma = min(current_epoch / float(self.warmup_epochs), 1.0)
+        else:
+            gamma = 1.0
+
+        # 4. 加权求和
+        total_loss = hm_loss + gamma * self.coord_weight * coord_loss
+
+        return total_loss, {
+            'loss_heatmap': hm_loss.item(),
+            'loss_coord': coord_loss.item(),
+            'coord_weight': gamma * self.coord_weight
+        }

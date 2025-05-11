@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.functional as F
 
 from .components import InvertedResidual, GhostBottleneck
 
@@ -89,5 +90,18 @@ class JointPoseNet(nn.Module):
         combined = torch.cat([hr_feat, heatmap_init], dim=1)
         refine_feat = self.refine_conv1(combined)
         heatmap_refine = self.heatmap_conv2(refine_feat)
-        # Return both stage outputs (for multi-stage training supervision if needed)
-        return heatmap_init, heatmap_refine
+        # DSNT for keypoints
+        B, J, H, W = heatmap_refine.shape
+        # Flatten and softmax
+        heatmap_flat = heatmap_refine.view(B, J, -1)
+        prob = F.softmax(heatmap_flat, dim=2)
+        # Create coordinate grids
+        grid_y = torch.arange(H, dtype=prob.dtype, device=prob.device).unsqueeze(1).repeat(1, W).view(-1)
+        grid_x = torch.arange(W, dtype=prob.dtype, device=prob.device).repeat(H)
+        # Expand grids and compute expectation
+        grid_x = grid_x.unsqueeze(0).unsqueeze(0)  # [1,1,H*W]
+        grid_y = grid_y.unsqueeze(0).unsqueeze(0)
+        x_coords = torch.sum(prob * grid_x, dim=2)
+        y_coords = torch.sum(prob * grid_y, dim=2)
+        keypoints = torch.stack([x_coords, y_coords], dim=2)  # [B, J, 2]
+        return heatmap_init, heatmap_refine, keypoints
