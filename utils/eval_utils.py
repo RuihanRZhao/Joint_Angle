@@ -100,6 +100,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
                     else:
                         gt_kps = np.zeros((17,3), dtype=np.float32)
 
+
                     # 在原图画 GT (绿) 和 Pred (红)
                     wb_gt, _ = draw_pose_on_image(img_tensor,
                                                   torch.from_numpy(gt_kps).to(device),
@@ -110,6 +111,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
                                                    color=(255,0,0),
                                                    use_wandb=True)
                     viz_images.append(wb_pred)
+                    print(pred_kpts)
 
     # COCO 评估
     coco_dt = coco_gt.loadRes(results)

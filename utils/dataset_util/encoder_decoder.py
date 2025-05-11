@@ -1,8 +1,6 @@
 import torch
 import numpy as np
 
-import numpy as np
-
 def keypoints_to_heatmaps(keypoints, input_size, output_size, sigma=2):
     """
     将关键点(像素坐标)转换为高斯热图。
