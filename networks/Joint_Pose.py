@@ -96,8 +96,9 @@ class JointPoseNet(nn.Module):
         heatmap_flat = heatmap_refine.view(B, J, -1)
         prob = F.softmax(heatmap_flat, dim=2)
         # 创建归一化坐标网格 [-1, 1]
-        grid_y = torch.linspace(-1.0, 1.0, steps=H, dtype=prob.dtype, device=prob.device).unsqueeze(1).repeat(1, W).view(-1)
-        grid_x = torch.linspace(-1.0, 1.0, steps=W, dtype=prob.dtype, device=prob.device).repeat(H)
+        grid_y = torch.linspace(-1.0, 1.0, steps=H, dtype=prob.dtype, device=prob.device).unsqueeze(1).repeat(1,W).contiguous().view(-1)
+        grid_x = torch.linspace(-1.0, 1.0, steps=W, dtype=prob.dtype, device=prob.device).repeat(H).contiguous()
+
         # 计算期望坐标
         grid_x = grid_x.unsqueeze(0).unsqueeze(0)  # [1,1,H*W]
         grid_y = grid_y.unsqueeze(0).unsqueeze(0)

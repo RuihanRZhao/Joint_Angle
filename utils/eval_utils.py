@@ -67,8 +67,8 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
                 py = (norm_ys + 1.0) / 2.0 * (input_h - 1)
 
                 # [MODIFIED] 输入图像像素坐标 -> 原图坐标
-                xs = px / input_w * w0 + x0
-                ys = py / input_h * h0 + y0
+                xs = (pts[:, 0] + 1.0) / 2.0 * w0 + x0
+                ys = (pts[:, 1] + 1.0) / 2.0 * h0 + y0
 
                 keypoints_list = []
                 for x, y, c in zip(xs, ys, cs):
