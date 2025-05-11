@@ -29,4 +29,7 @@ pip3 install -r requirements.txt
 
 mkdir run/
 mkdir run/data
+mkdir run/single_person
 mkdir run/checkpoints
+
+python single_person_dataset.py
