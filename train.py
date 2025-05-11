@@ -107,8 +107,8 @@ def main():
 
         mean_ap, ap50, vis_images = evaluate(
             model, val_loader,
-            "annotations/person_keypoints_val2017.json",
-            os.path.join(config['data_root'], "val2017"),
+            "annotations/single_person_keypoints_val.json",
+            os.path.join(config['data_root'], "val"),
             n_viz=config.get('n_vis', 6)
         )
         print(f"Epoch {epoch + 1} finished. Total Loss: {total_loss:.8f} | mAP: {mean_ap:.8f} | AP50: {ap50:.8f} | LR: {optimizer.param_groups[0]['lr']}")

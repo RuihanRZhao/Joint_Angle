@@ -18,7 +18,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
         model: 已加载权重并设置为 eval 模式的网络模型。
         val_loader: 验证集 DataLoader，返回 (images, meta) 元组。
         ann_file: COCO 骨架关键点验证集标注 JSON 路径。
-        val_image_dir: 验证集图像目录路径（val2017）。
+        val_image_dir: 验证集图像目录路径（val）。
         n_viz: 随机可视化图像数量。
     Returns:
         mAP (float), AP50 (float), List[wandb.Image]

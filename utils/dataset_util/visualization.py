@@ -136,11 +136,11 @@ if __name__ == "__main__":
         description="验证 draw_pose_on_image 在 COCO 数据集上的效果"
     )
     parser.add_argument(
-        "--data_root", type=str, default='../../run/data', )
+        "--data_root", type=str, default='../../run/single_person', )
     parser.add_argument(
-        "--ann_file", type=str, default="annotations/person_keypoints_val2017.json",)
+        "--ann_file", type=str, default="annotations/single_person_keypoints_val.json",)
     parser.add_argument(
-        "--img_dir", type=str, default="val2017")
+        "--img_dir", type=str, default="val")
     parser.add_argument(
         "--out_dir", type=str, default="../../run/temp/",)
     parser.add_argument(
