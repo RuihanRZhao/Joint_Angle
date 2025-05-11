@@ -87,10 +87,10 @@ def evaluate(model, val_loader, ann_file, val_image_dir, n_viz=5):
                         gt_kps = np.array(gt_ann['keypoints'], dtype=np.float32).reshape(-1, 3)
                     else:
                         gt_kps = np.zeros((17,3), dtype=np.float32)
-                    wb_gt = draw_pose_on_image(img_tensor, torch.from_numpy(gt_kps), color=(0,255,0))
+                    wb_gt = draw_pose_on_image(img_tensor.to(device), torch.from_numpy(gt_kps).to(device), color=(0,255,0))
                     base_img = torch.from_numpy(wb_gt.image).permute(2,0,1).to(dtype=torch.uint8)
                     pred_tensor = torch.from_numpy(orig_kpts)
-                    wb_pred = draw_pose_on_image(base_img, pred_tensor, color=(255,0,0))
+                    wb_pred = draw_pose_on_image(base_img.to(device), pred_tensor.to(device), color=(255,0,0))
                     viz_images.append(wb_pred)
 
 
