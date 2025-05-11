@@ -1,11 +1,7 @@
-import os
-import random
 import torch
 import wandb
 import torchvision
-import cv2
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval
+import numpy as np
 
 # COCO 17 骨架连接关系，索引对应 COCO keypoints 顺序
 COCO_SKELETON = [
@@ -38,10 +34,10 @@ def draw_pose_on_image(
     """
     # ---- 1) 处理 image ----
     # 如果是 numpy，先从 HWC 转为 CHW 的 torch.Tensor
-    if isinstance(image, np.ndarray):
-        img_tensor = torch.from_numpy(image).permute(2, 0, 1)  # HWC -> CHW
+    if isinstance(image_tensor, np.ndarray):
+        img_tensor = torch.from_numpy(image_tensor).permute(2, 0, 1)  # HWC -> CHW
     else:
-        img_tensor = image
+        img_tensor = image_tensor
 
     # 如果多了 batch 维度（1,3,H,W），去掉它
     if isinstance(img_tensor, torch.Tensor) and img_tensor.ndim == 4:

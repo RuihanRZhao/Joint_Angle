@@ -73,7 +73,6 @@ def main():
     print(f"================================")
     model = JointPoseNet(num_joints=17)  # COCO has 17 joints
 
-    # Note: If Joint_Pose.py forward uses variable 'heatmap1', ensure it is corrected to 'heatmap_init'
     model = model.to(device)
     criterion = HeatmapMSELoss()
 
