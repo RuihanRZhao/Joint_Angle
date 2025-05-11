@@ -24,7 +24,6 @@ class COCOPoseDataset(Dataset):
         input_size: tuple (width, height) for resized input images
         transform: optional torchvision transforms to apply to the image (after cropping/resizing)
         """
-        ensure_coco_data(root, retries=2, backoff_factor=1.0)
 
         ann_path = os.path.join(root, ann_file)
         if not os.path.isfile(ann_path):

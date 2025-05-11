@@ -44,21 +44,22 @@ def main():
 
     train_dataset = COCOPoseDataset(
         root=config['data_root'],
-        ann_file="annotations/person_keypoints_train2017.json",
-        img_dir="train2017",
+        ann_file="annotations/single_person_keypoints_train.json",
+        img_dir="train",
         input_size=input_size,
+        return_meta=False
     )
     val_dataset = COCOPoseDataset(
         root=config['data_root'],
-        ann_file="annotations/person_keypoints_val2017.json",
-        img_dir="val2017",
+        ann_file="annotations/single_person_keypoints_val.json",
+        img_dir="val",
         input_size=input_size,
         return_meta=True
     )
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True,
-                              num_workers=config['num_workers_train'], prefetch_factor=2)
+                              num_workers=config['num_workers_train'], pin_memory=config['pin_memory'], prefetch_factor=config['prefetch_factor'])
     val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False,
-                            num_workers=config['num_workers_val'], prefetch_factor=2)
+                            num_workers=config['num_workers_val'], pin_memory=config['pin_memory'], prefetch_factor=config['prefetch_factor'])
 
     # Model, criterion, optimizer, scheduler
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

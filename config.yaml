@@ -1,6 +1,9 @@
 run_root: 'run'
-data_root: 'run/data'
+data_root: 'run/single_person'
 checkpoint_root: 'run/checkpoints'
+
+# dataset build
+person_margin_ratio: !!float 0.1
 
 # resume stuff
 resume: !!bool False
@@ -10,8 +13,8 @@ input_h: !!int 288
 input_w: !!int 384
 
 epochs: 5
-batch_size: 128
-learning_rate: !!float 1e-4
+batch_size: 384
+learning_rate: !!float 3e-4
 
 # optimizer and scheduler
 div_factor: !!float 25.0
@@ -21,7 +24,8 @@ n_vis: 6
 
 num_workers_train: 16
 num_workers_val: 16
-
+pin_memory: !!bool True
+prefetch_factor: 2
 
 
 
