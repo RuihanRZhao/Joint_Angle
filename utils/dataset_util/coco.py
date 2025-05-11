@@ -147,7 +147,7 @@ class COCOPoseDataset(Dataset):
         # mask 和 tensor 构建
         mask = np.where(keypoints[:, 2] > 0, 1.0, 0.0).astype(np.float32)
 
-        target_heatmaps_tensor = torch.from_numpy(target_heatmaps).to(dtype=torch.float32)
+        target_heatmaps_tensor = target_heatmaps.to(dtype=torch.float32)
         mask_tensor = torch.from_numpy(mask)
 
         keypoints_tensor = torch.from_numpy(keypoints[:, :2]).to(dtype=torch.float32)
