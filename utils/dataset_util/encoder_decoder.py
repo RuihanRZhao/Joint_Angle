@@ -1,86 +1,70 @@
 import torch
 import numpy as np
 
-def keypoints_to_heatmaps(keypoints, output_size, sigma=2):
+import numpy as np
+
+def keypoints_to_heatmaps(keypoints, input_size, output_size, sigma=2):
     """
-    将关键点坐标转换为高斯热图。
+    将关键点(像素坐标)转换为高斯热图。
     参数:
-        keypoints: 形状为 (num_keypoints, 2) 或 (num_keypoints, 3) 的数组，包含关键点原图像像素坐标（以及可选的可见性标志）。
-        heatmap_height: 输出热图的高度。
-        heatmap_width: 输出热图的宽度。
-        sigma: 高斯分布的标准差（热图坐标尺度下）。
+        keypoints: ndarray (num_joints, 2) 或 (num_joints, 3)，像素坐标 (x, y) 及可选可见性 v。
+        input_size: (input_h, input_w)，模型输入裁剪图的尺寸（像素）。
+        output_size: (out_h, out_w)，要生成的热图尺寸。
+        sigma: 高斯标准差（热图坐标系下）。
     返回:
-        heatmaps: numpy数组，形状为 (num_keypoints, heatmap_height, heatmap_width)，每个关键点对应一个热图。
+        heatmaps: ndarray (num_joints, out_h, out_w)，每个关节一张热图。
     """
-    heatmap_height, heatmap_width = output_size
-
-    num_keypoints = len(keypoints)
-    # 将关键点列表转换为浮点数组，以便计算
+    input_h, input_w = input_size
+    out_h, out_w = output_size
+    num_joints = len(keypoints)
     keypoints_arr = np.array(keypoints, dtype=float)
-    # 初始化热图张量
-    heatmaps = np.zeros((num_keypoints, heatmap_height, heatmap_width), dtype=np.float32)
-    if num_keypoints == 0:
-        return heatmaps  # 无关键点则直接返回空热图
+    heatmaps = np.zeros((num_joints, out_h, out_w), dtype=np.float32)
+    if num_joints == 0:
+        return heatmaps
 
-    # **按比例将原图坐标缩放到热图坐标系**（假设已知原图尺寸为 input_height, input_width）
-    # 这里假设原图尺寸与热图尺寸的比例是恒定的。例如原图宽度=input_width，热图宽度=heatmap_width。
-    # 如果原图尺寸未知，可根据数据集配置或上下文获取。以下示例假设下采样比例为 input_width/heatmap_width。
+    # 根据明确的输入/输出尺寸计算缩放比例
+    scale_x = out_w / input_w
+    scale_y = out_h / input_h
 
-    input_width = heatmap_width * (1 if heatmap_width == 0 else (keypoints_arr[:, 0].max() / (heatmap_width - 1) if heatmap_width > 1 else 1))
-    input_height = heatmap_height * (1 if heatmap_height == 0 else (keypoints_arr[:, 1].max() / (heatmap_height - 1) if heatmap_height > 1 else 1))
-
-    print(output_size)
-    print((input_height, input_width))
-    # 计算缩放比例（热图尺寸 / 原图尺寸）
-    scale_x = heatmap_width / input_width
-    scale_y = heatmap_height / input_height
-
+    # 预生成高斯核
     radius = int(3 * sigma)
     diameter = 2 * radius + 1
-    # 预先计算高斯核(直径x直径)，中心位于 (radius, radius)
-    x = np.arange(diameter) - radius
-    y = x[:, np.newaxis]
-    gaussian_patch = np.exp(-(x**2 + y**2) / (2 * sigma * sigma))
+    xs = np.arange(diameter) - radius
+    ys = xs[:, None]
+    gaussian = np.exp(-(xs**2 + ys**2) / (2 * sigma * sigma))
 
     for i, kp in enumerate(keypoints_arr):
-        # 如果提供了可见性标志且关键点不可见，则跳过绘制
-        if kp.shape and len(kp) > 2:
-            v = kp[2]
-            if v < 0.5:
-                continue
-        x_orig, y_orig = kp[0], kp[1]
-        # 跳过无效坐标
-        if x_orig < 0 or y_orig < 0:
+        # 可见性检查
+        if kp.shape[0] > 2 and kp[2] < 0.5:
             continue
-        # **将原图坐标按比例缩放到热图坐标**
-        mu_x = int(x_orig * scale_x + 0.5)
-        mu_y = int(y_orig * scale_y + 0.5)
-        # 如果缩放后超出热图范围则跳过
-        if mu_x < 0 or mu_x >= heatmap_width or mu_y < 0 or mu_y >= heatmap_height:
+        x, y = kp[0], kp[1]
+        if x < 0 or y < 0 or x > input_w or y > input_h:
             continue
 
-        # 计算高斯放置的边界坐标（ul为左上角，br为右下角的下一个索引）
-        ul_x = mu_x - radius
-        ul_y = mu_y - radius
-        br_x = mu_x + radius + 1
-        br_y = mu_y + radius + 1
+        # 缩放到热图坐标
+        mu_x = int(x * scale_x + 0.5)
+        mu_y = int(y * scale_y + 0.5)
+        if not (0 <= mu_x < out_w and 0 <= mu_y < out_h):
+            continue
 
-        # 将边界裁剪到热图范围内
-        img_x_min = max(0, ul_x)
-        img_y_min = max(0, ul_y)
-        img_x_max = min(heatmap_width, br_x)
-        img_y_max = min(heatmap_height, br_y)
-        # 计算高斯核对应的裁剪区域
-        patch_x_min = max(0, -ul_x)
-        patch_y_min = max(0, -ul_y)
-        patch_x_max = patch_x_min + (img_x_max - img_x_min)
-        patch_y_max = patch_y_min + (img_y_max - img_y_min)
-        # 将高斯核区域贴到热图上
-        heatmaps[i, img_y_min:img_y_max, img_x_min:img_x_max] = np.maximum(
-            heatmaps[i, img_y_min:img_y_max, img_x_min:img_x_max],
-            gaussian_patch[patch_y_min:patch_y_max, patch_x_min:patch_x_max]
+        # 计算高斯贴图范围
+        ul_x, ul_y = mu_x - radius, mu_y - radius
+        br_x, br_y = mu_x + radius + 1, mu_y + radius + 1
+
+        x0 = max(0, ul_x); y0 = max(0, ul_y)
+        x1 = min(out_w, br_x); y1 = min(out_h, br_y)
+
+        gauss_x0 = max(0, -ul_x); gauss_y0 = max(0, -ul_y)
+        gauss_x1 = gauss_x0 + (x1 - x0); gauss_y1 = gauss_y0 + (y1 - y0)
+
+        # 合并
+        heatmaps[i, y0:y1, x0:x1] = np.maximum(
+            heatmaps[i, y0:y1, x0:x1],
+            gaussian[gauss_y0:gauss_y1, gauss_x0:gauss_x1]
         )
+
     return heatmaps
+
 
 def batch_keypoints_to_heatmaps(batch_keypoints, heatmap_height, heatmap_width, sigma=2):
     """

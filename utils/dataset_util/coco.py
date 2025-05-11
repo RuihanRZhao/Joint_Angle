@@ -154,7 +154,7 @@ class COCOPoseDataset(Dataset):
         # 生成目标热图和mask（热图大小为输入的1/4）
         out_w = int(input_w // 4)
         out_h = int(input_h // 4)
-        target_heatmaps = keypoints_to_heatmaps(keypoints_pixel, output_size=(out_h, out_w), sigma=2)
+        target_heatmaps = keypoints_to_heatmaps(keypoints_pixel, input_size=(input_h, input_w), output_size=(out_h, out_w), sigma=2)
         # mask 和 tensor 构建
         mask = np.where(keypoints[:, 2] > 0, 1.0, 0.0).astype(np.float32)
 
