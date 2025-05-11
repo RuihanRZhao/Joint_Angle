@@ -6,8 +6,8 @@ checkpoint_root: 'run/checkpoints'
 resume: !!bool False
 resume_id: 1
 
-input_h: !!int 240
-input_w: !!int 320
+input_h: !!int 288
+input_w: !!int 384
 
 epochs: 1000
 batch_size: 64
