@@ -119,7 +119,7 @@ def main():
     # Training loop
     for epoch in range(start_epoch, config['epochs']):
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
-        coord_weight = coord_weight_scheduler(epoch)
+        coord_weight = coord_weight_scheduler(epoch+1)
 
         total_loss, loss_detail = train_one_epoch(epoch, model, train_loader, criterion, optimizer, scheduler, coord_weight, device)
 
