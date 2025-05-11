@@ -109,7 +109,8 @@ def main():
             model, val_loader,
             "annotations/single_person_keypoints_val.json",
             os.path.join(config['data_root'], "val"),
-            n_viz=config.get('n_vis', 6)
+            config['input_w'], config['input_h'],
+            n_viz=config['n_viz']
         )
         print(f"Epoch {epoch + 1}: Total Loss: {total_loss:.6f} | Heat Loss{loss_detail['loss_heatmap']:.6f} | Keypoints Loss: {loss_detail['loss_coord']:.6f} | mAP: {mean_ap:.6f} | AP50: {ap50:.6f} | LR: {optimizer.param_groups[0]['lr']}")
 
