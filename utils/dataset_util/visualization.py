@@ -1,118 +1,189 @@
-from typing import Tuple
-
 import torch
-import wandb
-import torchvision
 import numpy as np
+import wandb
+import cv2
 
-# COCO 17 骨架连接关系，索引对应 COCO keypoints 顺序
-COCO_SKELETON = [
-  (0,1),(0,2),(1,3),(2,4),    # nose→eyes→ears
-  (0,5),(0,6),               # nose→shoulders
-  (5,7),(7,9),               # left shoulder→elbow→wrist
-  (6,8),(8,10),              # right shoulder→elbow→wrist
-  (5,6),                     # 两肩
-  (11,12),                   # 两髋
-  (5,11),(6,12),             # shoulder→hip
-  (11,13),(13,15),           # left hip→knee→ankle
-  (12,14),(14,16)            # right hip→knee→ankle
+# COCO 17 点标准骨架（0-based）
+_COCO_SKELETON = [
+    (0,1), (0,2), (1,3), (2,4),
+    (0,5), (0,6), (5,7), (7,9),
+    (6,8), (8,10), (5,6), (11,12),
+    (5,11), (6,12), (11,13), (13,15),
+    (12,14), (14,16)
 ]
 
-
-def _to_tensor_and_meta(image):
+def draw_pose_on_image(image,
+                       keypoints,
+                       color=(255,0,0),
+                       radius: int = 3,
+                       thickness: int = 2,
+                       use_wandb: bool = False):
     """
-    将输入 image 转为 CHW Tensor，并返回元信息：
-      - img_tensor: torch.Tensor, C×H×W
-      - input_is_numpy: bool, 原始输入是否是 numpy.ndarray
-      - batch_dim: bool, 是否原本带有 batch 维度 [1,C,H,W]
+    在单张图像上绘制所有可见的 COCO 关键点及其连线，仅用 cv2。
+    Args:
+      image: numpy.ndarray (H,W,3) 或 torch.Tensor (3,H,W)/(1,3,H,W)
+      keypoints: numpy.ndarray (K,3)/(1,K,3) 或 torch.Tensor 同形状
+      color: RGB 三元组
+      radius: 点半径
+      thickness: 线宽
+      use_wandb: 是否生成 wandb.Image
+    Returns:
+      out: 与输入 image 相同类型/形状的绘制后图像
+      wb_img: wandb.Image 或 None
     """
-    input_is_numpy = isinstance(image, np.ndarray)
-    if input_is_numpy:
-        # H×W×C -> C×H×W
-        img_tensor = torch.from_numpy(image).permute(2, 0, 1)
-        batch_dim = False
+    # 1) 准备底图 (BGR)，并记录元信息
+    is_numpy = isinstance(image, np.ndarray)
+    if is_numpy:
+        img_rgb = image
+        had_batch = False
+        orig_dtype = image.dtype
     else:
         img_tensor = image
-        # 若为 [1,C,H,W]，去掉 batch 维度
+        # squeeze batch
         if img_tensor.ndim == 4 and img_tensor.shape[0] == 1:
-            batch_dim = True
+            had_batch = True
             img_tensor = img_tensor.squeeze(0)
         else:
-            batch_dim = False
+            had_batch = False
+        # Tensor C×H×W -> numpy H×W×C
+        arr = img_tensor.cpu().numpy()
+        if arr.dtype in (np.float32, np.float64):
+            arr = (arr*255).astype(np.uint8)
+        img_rgb = arr.transpose(1,2,0)
+        orig_dtype = img_tensor.dtype
+    # 转 BGR
+    img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 
-    if img_tensor.ndim != 3 or img_tensor.shape[0] not in (1, 3):
-        raise ValueError(f"_to_tensor_and_meta: 期望 image 为 C×H×W (C=1或3)，但得到 {tuple(img_tensor.shape)}。")
-
-    return img_tensor, input_is_numpy, batch_dim
-
-def _to_keypoint_coords(keypoints):
-    """
-    将 keypoints 转为 shape 为 [1, K, 2] 的坐标 tensor（去掉置信度，添加 batch 维）。
-    支持输入 [K,3]、[1,K,3]、numpy.ndarray 或 torch.Tensor。
-    """
+    # 2) 准备关键点 (K,3) array
     if isinstance(keypoints, np.ndarray):
-        kps = torch.from_numpy(keypoints)
-    else:
         kps = keypoints
-
-    # 去掉多余 batch 维
+    else:
+        kps = keypoints.cpu().numpy()
+    # squeeze batch
     if kps.ndim == 3 and kps.shape[0] == 1:
         kps = kps.squeeze(0)
-    if kps.ndim != 2 or kps.shape[1] != 3:
-        raise ValueError(f"_to_keypoint_coords: 期望 keypoints 为 [K,3]，但得到 {tuple(kps.shape)}。")
+    # kps shape must be (K,>=3)
+    # 取 x,y,v
+    coords = kps[:, :2]
+    vs     = kps[:, 2]
 
-    # 提取 x,y 并扩 batch 维 -> [1, K, 2]
-    coords = kps[:, :2].unsqueeze(0)
-    return coords
+    H, W = img_bgr.shape[:2]
+    bgr = (int(color[2]), int(color[1]), int(color[0]))
 
-def _draw(img_tensor, coords, color):
-    """
-    在单张 C×H×W Tensor 上绘制 keypoints（coords: [1,K,2]），
-    返回同样 shape 的 Tensor。
-    """
-    # torchvision.draw_keypoints 要求 img_tensor 维度为 [C,H,W]，coords 为 [num_instances, K, 2]
-    drawn = torchvision.utils.draw_keypoints(img_tensor, coords, COCO_SKELETON, colors=color[0])
-    return drawn
+    # 3) 画连线：只连两端都可见的点
+    for i,j in _COCO_SKELETON:
+        if vs[i] > 0 and vs[j] > 0:
+            x1,y1 = coords[i]
+            x2,y2 = coords[j]
+            if 0<= x1 < W and 0<= y1 < H and 0<= x2 < W and 0<= y2 < H:
+                cv2.line(
+                    img_bgr,
+                    (int(x1),int(y1)),
+                    (int(x2),int(y2)),
+                    bgr, thickness, lineType=cv2.LINE_AA
+                )
 
-def _to_original_format(drawn_tensor, input_is_numpy, batch_dim):
-    """
-    将绘制后的张量还原成和原始输入相同的格式：
-      - 若是 numpy 输入，返回 H×W×C ndarray
-      - 若是 tensor 且带 batch 维，则返回 [1,C,H,W]
-      - 否则返回 [C,H,W] Tensor
-    """
-    # 如果原来有 batch 维，先补回
-    if batch_dim:
-        drawn_tensor = drawn_tensor.unsqueeze(0)
+    # 4) 画点：只画可见点
+    for (x,y), v in zip(coords, vs):
+        if v > 0 and 0<= x < W and 0<= y < H:
+            cv2.circle(
+                img_bgr,
+                (int(x),int(y)),
+                radius, bgr, thickness=-1, lineType=cv2.LINE_AA
+            )
 
-    if input_is_numpy:
-        # CHW -> HWC 或 BCHW -> BHWC，然后去除 batch 维
-        if drawn_tensor.ndim == 4:
-            arr = drawn_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()
-        else:
-            arr = drawn_tensor.permute(1, 2, 0).cpu().numpy()
-        return arr
+    # 5) 恢复到原始格式
+    # BGR -> RGB
+    out_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    if is_numpy:
+        out = out_rgb.astype(orig_dtype)
     else:
-        return drawn_tensor
+        # numpy HWC -> Tensor CHW
+        tch = torch.from_numpy(out_rgb.transpose(2,0,1))
+        if orig_dtype.is_floating_point:
+            tch = tch.float().div(255)
+        else:
+            tch = tch.to(orig_dtype)
+        if had_batch:
+            tch = tch.unsqueeze(0)
+        out = tch
 
-def draw_pose_on_image(image, keypoints, color):
-    """
-    在单张 RGB 图像上绘制人体关键点，返回与输入 image 相同类型和形状的数据。
+    # 6) wandb.Image 可选
+    wb_img = None
+    if use_wandb:
+        if isinstance(out, np.ndarray):
+            arr = out
+        else:
+            arr = out.detach().cpu().numpy().transpose(1,2,0)
+            if arr.dtype in (np.float32, np.float64):
+                arr = (arr*255).astype(np.uint8)
+        wb_img = wandb.Image(arr)
 
-    Args:
-        image:
-          - numpy.ndarray (H, W, 3)
-          - torch.Tensor (3, H, W) 或 (1, 3, H, W)
-        keypoints:
-          - numpy.ndarray (K, 3) 或 torch.Tensor (K, 3)
-          - 或带 batch 维的 (1, K, 3)
-        color: (R, G, B) 整数元组
+    return out, wb_img
 
-    Returns:
-        与输入 image 格式一致的绘制后图像。
-    """
-    img_tensor, is_numpy, has_batch = _to_tensor_and_meta(image)
-    coords = _to_keypoint_coords(keypoints)
-    drawn = _draw(img_tensor, coords, color)
 
-    return _to_original_format(drawn, is_numpy, has_batch), wandb.Image(drawn.permute(1, 2, 0).cpu().numpy())
+if __name__ == "__main__":
+    import os
+    import argparse
+    import cv2
+    import numpy as np
+    from pycocotools.coco import COCO
+
+    # 引入本模块的绘图函数
+    from visualization import draw_pose_on_image
+
+    parser = argparse.ArgumentParser(
+        description="验证 draw_pose_on_image 在 COCO 数据集上的效果"
+    )
+    parser.add_argument(
+        "--data_root", type=str, default='../../run/data', )
+    parser.add_argument(
+        "--ann_file", type=str, default="annotations/person_keypoints_val2017.json",)
+    parser.add_argument(
+        "--img_dir", type=str, default="val2017")
+    parser.add_argument(
+        "--out_dir", type=str, default="../../run/temp/",)
+    parser.add_argument(
+        "--num", type=int, default=5,)
+    args = parser.parse_args()
+
+    # 创建输出目录
+    os.makedirs(args.out_dir, exist_ok=True)
+
+    # 加载 COCO 骨架关键点注释
+    ann_path = os.path.join(args.data_root, args.ann_file)
+    coco = COCO(ann_path)
+    img_dir = os.path.join(args.data_root, args.img_dir)
+
+    # 随机挑选若干张图
+    img_ids = coco.getImgIds(catIds=[1])
+    np.random.shuffle(img_ids)
+    img_ids = img_ids[: args.num]
+
+    for img_id in img_ids:
+        img_info = coco.loadImgs(img_id)[0]
+        img_path = os.path.join(img_dir, img_info["file_name"])
+        img_bgr = cv2.imread(img_path)
+        if img_bgr is None:
+            print(f"无法读取图像：{img_path}")
+            continue
+        # 转为 RGB ndarray
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+        # 只取第一个人（单人姿态）
+        ann_ids = coco.getAnnIds(imgIds=[img_id], catIds=[1])
+        anns = coco.loadAnns(ann_ids)
+        if len(anns) == 0:
+            print(f"图像 {img_path} 中没有检测到人员注释")
+            continue
+        kps = np.array(anns[0]["keypoints"], dtype=np.float32).reshape(-1, 3)
+
+        # 绘制关键点和骨架
+        vis, _ = draw_pose_on_image(img_rgb, kps, color=(255, 0, 0))
+
+        # 输出结果（vis 是 H×W×3 ndarray，因为输入是 numpy）
+        out_path = os.path.join(args.out_dir, img_info["file_name"])
+        # 转回 BGR 保存
+        vis_bgr = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(out_path, vis_bgr)
+        print(f"Saved visualization for image {img_id} → {out_path}")
