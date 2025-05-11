@@ -102,8 +102,7 @@ def main():
     # Training loop
     for epoch in range(start_epoch, config['epochs']):
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
-        avg_loss = train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device)
-        print(f"Epoch {epoch + 1} finished. Average Loss: {avg_loss:.4f}")
+        total_loss = train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device)
 
         mean_ap, ap50, vis_images = evaluate(
             model, val_loader,
@@ -111,10 +110,11 @@ def main():
             os.path.join(config['data_root'], "val2017"),
             n_viz=config.get('n_vis', 6)
         )
+        print(f"Epoch {epoch + 1} finished. Total Loss: {total_loss:.8f} | mAP: {mean_ap:.8f} | AP50: {ap50:.8f} | LR: {optimizer.param_groups[0]['lr']}")
 
         # Update best model
         if ap50 > best_ap:
-            best_loss = avg_loss
+            best_ap = ap50
             best_path = os.path.join(config['checkpoint_root'], f"best_model_{epoch + 1}.pth")
             save_checkpoint({
                 'epoch': epoch,
@@ -127,12 +127,13 @@ def main():
 
         wandb.log({
             "epoch": epoch + 1,
-            "train_loss": avg_loss,
-            "val_mean_AP": mean_ap,
-            "val_AP50": ap50,
-            "learning_rate": optimizer.param_groups[0]["lr"],
+            "train/loss": total_loss,
+            "val/mean_AP": mean_ap,
+            "val/AP50": ap50,
+            "train/learning_rate": optimizer.param_groups[0]["lr"],
             "examples": vis_images  # 可视化预测结果
         })
+
 
     # Save final model
     final_path = os.path.join(config['checkpoint_root'], "final_model.pth")
