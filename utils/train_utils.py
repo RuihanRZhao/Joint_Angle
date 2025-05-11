@@ -24,7 +24,7 @@ def train_one_epoch(model, loader, criterion, optimizer, scheduler, device):
     model.train()
     epoch_loss = 0.0
     # Iterate over training set
-    for i, batch in tqdm(enumerate(loader), desc="Training", unit="batch"):
+    for i, batch in tqdm(enumerate(loader), desc="Training", total=len(loader), unit="batch"):
         # Unpack batch to images, targets (and mask if provided)
         if isinstance(batch, (tuple, list)) and len(batch) == 3:
             images, targets, mask = batch
