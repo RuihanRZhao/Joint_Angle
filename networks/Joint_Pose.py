@@ -24,7 +24,6 @@ class JointPoseNet(nn.Module):
             (6, 64, 4, 2),   # output stride 16
             (6, 96, 3, 1),   # output stride 16 (no further downsample)
             (6, 160, 3, 1)   # output stride 16 (modified, originally stride 2 for 32 but we keep 16)
-            # (6, 320, 1, 1)  # optional stage (not used to limit params, output stride still 16)
         ]
         in_ch = input_channels
         for t, c, n, s in mobilenet_cfg:
@@ -40,10 +39,11 @@ class JointPoseNet(nn.Module):
         backbone_out_channels = in_ch  # expected to be 160
         # High-resolution parallel branch (lightweight)
         # Takes feature from early backbone (after 1/4 resolution stage, 24 channels)
-        self.highres_branch = nn.ModuleList()
-        self.highres_branch.append(GhostBottleneck(inp=24, mid_channels=24*2, oup=24, stride=1, use_se=False))
-        self.highres_branch.append(GhostBottleneck(inp=24, mid_channels=24*2, oup=32, stride=1, use_se=True))
-        self.highres_branch.append(GhostBottleneck(inp=32, mid_channels=32*2, oup=32, stride=1, use_se=False))
+        self.highres_branch = nn.ModuleList([
+            GhostBottleneck(inp=24, mid_channels=24 * 2, oup=24, stride=1, use_se=False),
+            GhostBottleneck(inp=24, mid_channels=24 * 2, oup=32, stride=1, use_se=True),
+            GhostBottleneck(inp=32, mid_channels=32 * 2, oup=32, stride=1, use_se=False),
+        ])
         # Upsampling layers for low-res features (Dense Upsampling Convolution via PixelShuffle)
         self.upsample1 = nn.Sequential(
             nn.Conv2d(backbone_out_channels, 256, kernel_size=3, padding=1, bias=False),
