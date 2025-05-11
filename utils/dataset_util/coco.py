@@ -171,9 +171,9 @@ def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
     for fname, url in urls.items():
         zip_path = os.path.join(root, fname)
         target_folder = {
-            "train2017.zip":   os.path.join(root),
-            "val2017.zip":     os.path.join(root),
-            "annotations.zip": os.path.join(root),
+            "train2017.zip":   os.path.join(root, "train2017"),
+            "val2017.zip":     os.path.join(root, "val2017"),
+            "annotations.zip": os.path.join(root, "annotations"),
         }[fname]
 
         # 如果文件夹已经存在，则跳过
