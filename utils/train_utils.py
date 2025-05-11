@@ -24,7 +24,8 @@ def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, devic
         # Unpack batch to images, targets (and mask if provided)
         images, targets_heatmap, targets_keypoints, mask = batch
         images = images.to(device)
-        targets = targets.to(device)
+        targets_heatmap = targets_heatmap.to(device)
+        targets_keypoints = targets_keypoints.to(device)
         if mask is not None:
             mask = mask.to(device)
         optimizer.zero_grad()
