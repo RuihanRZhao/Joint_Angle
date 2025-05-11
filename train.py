@@ -103,7 +103,7 @@ def main():
     # Training loop
     for epoch in range(start_epoch, config['epochs']):
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
-        total_loss = train_one_epoch(epoch, model, train_loader, criterion, optimizer, scheduler, device)
+        total_loss, loss_detail = train_one_epoch(epoch, model, train_loader, criterion, optimizer, scheduler, device)
 
         mean_ap, ap50, vis_images = evaluate(
             model, val_loader,
@@ -111,7 +111,7 @@ def main():
             os.path.join(config['data_root'], "val"),
             n_viz=config.get('n_vis', 6)
         )
-        print(f"Epoch {epoch + 1} finished. Total Loss: {total_loss:.8f} | mAP: {mean_ap:.8f} | AP50: {ap50:.8f} | LR: {optimizer.param_groups[0]['lr']}")
+        print(f"Epoch {epoch + 1}: Total Loss: {total_loss:.6f} | Heat Loss{loss_detail['loss_heatmap']:.6f} | Keypoints Loss: {loss_detail['loss_coord']:.6f} | mAP: {mean_ap:.6f} | AP50: {ap50:.6f} | LR: {optimizer.param_groups[0]['lr']}")
 
         # Update best model
         if ap50 > best_ap:
@@ -129,9 +129,12 @@ def main():
         wandb.log({
             "epoch": epoch + 1,
             "train/loss": total_loss,
+            "train/heat_loss": loss_detail['loss_heatmap'],
+            "train/kps_loss": loss_detail['loss_coord'],
             "val/mean_AP": mean_ap,
             "val/AP50": ap50,
             "train/learning_rate": optimizer.param_groups[0]["lr"],
+            "train/kps_loss_weight": loss_detail['coord_weight'],
             "examples": vis_images  # 可视化预测结果
         })
 

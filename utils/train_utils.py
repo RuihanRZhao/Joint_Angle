@@ -34,7 +34,7 @@ def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, devic
         # Model output can be tuple (init, refine) or single
         heatmaps_init, heatmaps_refine, keypoints = outputs
         # Compute loss (apply mask if available)
-        loss= criterion(heatmaps_refine, targets_heatmap, keypoints, targets_keypoints, mask, epoch)
+        loss, loss_detail= criterion(heatmaps_refine, targets_heatmap, keypoints, targets_keypoints, mask, epoch)
         # Backpropagation and optimizer step
         loss.backward()
         optimizer.step()
@@ -43,4 +43,4 @@ def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, devic
             scheduler.step()
         epoch_loss += loss.item() * images.size(0)
 
-    return epoch_loss
+    return epoch_loss, loss_detail
