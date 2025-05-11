@@ -33,7 +33,7 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None):
 
 
 def coord_weight_scheduler(epoch: int,
-                           ramp_epochs: int = 60,
+                           ramp_epochs: int = 30,
                            power: float = 3.0) -> float:
     """
     epoch: 当前 epoch（从 0 开始计数）
