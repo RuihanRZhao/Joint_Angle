@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import torch
 import wandb
 import torchvision
@@ -15,7 +17,7 @@ COCO_SKELETON = [
 def draw_pose_on_image(
     image_tensor: torch.Tensor,
     keypoints: torch.Tensor,
-    color=(0, 255, 0),
+    color: Tuple[int, int, int],
     radius: int = 2,
     width: int = 3
 ) -> wandb.Image:
@@ -66,7 +68,7 @@ def draw_pose_on_image(
 
     # ---- 3) 绘制关键点 ----
     # colors 接受 list of RGB tuples，长度应与 num_instances 一致(这里只有 1 个实例)
-    drawn = torchvision.utils.draw_keypoints(img_tensor, coords, colors=[color])
+    drawn = torchvision.utils.draw_keypoints(img_tensor, coords, colors=color)
 
     # ---- 4) 转回 numpy H×W×3 并包装 wandb.Image ----
     drawn_np = drawn.permute(1, 2, 0).cpu().numpy()  # CHW -> HWC
