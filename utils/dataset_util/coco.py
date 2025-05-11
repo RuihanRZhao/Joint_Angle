@@ -126,21 +126,27 @@ class COCOPoseDataset(Dataset):
         # Adjust keypoints coordinates to cropped & resized image space
         keypoints[:, 0] -= x
         keypoints[:, 1] -= y
-        scale_x = input_w / (w if w != 0 else 1)  # avoid div by zero
+        scale_x = input_w / (w if w != 0 else 1)
         scale_y = input_h / (h if h != 0 else 1)
         keypoints[:, 0] *= scale_x
         keypoints[:, 1] *= scale_y
-        # Create target heatmaps
-        target_heatmaps = keypoints_to_heatmaps(keypoints, output_size=(int(input_h//4), int(input_w//4)), sigma=2)
-        # Create mask for keypoints (1 if visible, 0 if not labeled)
-        mask = np.where(keypoints[:, 2] > 0, 1.0, 0.0).astype(np.float32)
-        if isinstance(target_heatmaps, torch.Tensor):
-            target_heatmaps_tensor = target_heatmaps.to(dtype=torch.float32)
-        else:
-            target_heatmaps_tensor = torch.from_numpy(target_heatmaps).to(dtype=torch.float32)
-        mask_tensor = torch.from_numpy(mask)
 
-        keypoints_tensor = torch.as_tensor(keypoints[:, :2].copy(), dtype=torch.float32)
+        # 生成目标热图和mask（热图大小为输入的1/4）
+        out_w = int(input_w // 4);
+        out_h = int(input_h // 4)
+        target_heatmaps = keypoints_to_heatmaps(keypoints, output_size=(out_h, out_w), sigma=2)
+        mask = np.where(keypoints[:, 2] > 0, 1.0, 0.0).astype(np.float32)
+        target_heatmaps_tensor = torch.from_numpy(target_heatmaps) if not isinstance(target_heatmaps,
+                                                                                     torch.Tensor) else target_heatmaps
+        target_heatmaps_tensor = target_heatmaps_tensor.to(torch.float32)
+        mask_tensor = torch.from_numpy(mask).to(torch.float32)
+
+        # 将关键点坐标归一化到 [-1,1] 区间（基于输出热图尺寸）
+        keypoints_norm = keypoints[:, :2].copy()  # 复制关键点的x,y坐标
+        keypoints_norm[:, 0] = (keypoints_norm[:, 0] / (out_w - 1)) * 2 - 1
+        keypoints_norm[:, 1] = (keypoints_norm[:, 1] / (out_h - 1)) * 2 - 1
+        keypoints_tensor = torch.from_numpy(keypoints_norm).to(torch.float32)
+
         return img_tensor, target_heatmaps_tensor, keypoints_tensor, mask_tensor
 
     def __len__(self):

@@ -85,23 +85,23 @@ class JointPoseNet(nn.Module):
         up_feat1 = self.upsample1(features)   # 1/8, 64 channels
         up_feat2 = self.upsample2(up_feat1)   # 1/4, 64 channels
         # Stage 1 heatmaps
-        heatmap_init = self.heatmap_conv1(up_feat2)
-        # Stage 2 refinement: concatenate high-res features and stage1 heatmaps
+        heatmap_init = torch.sigmoid(self.heatmap_conv1(up_feat2))
+        # 第2阶段细化：将高分辨率特征与第一阶段热图拼接
         combined = torch.cat([hr_feat, heatmap_init], dim=1)
         refine_feat = self.refine_conv1(combined)
-        heatmap_refine = self.heatmap_conv2(refine_feat)
-        # DSNT for keypoints
+        heatmap_refine = torch.sigmoid(self.heatmap_conv2(refine_feat))
+        # DSNT for keypoints （修改后代码）
         B, J, H, W = heatmap_refine.shape
-        # Flatten and softmax
+        # 展平热图并计算 softmax 概率分布
         heatmap_flat = heatmap_refine.view(B, J, -1)
         prob = F.softmax(heatmap_flat, dim=2)
-        # Create coordinate grids
-        grid_y = torch.arange(H, dtype=prob.dtype, device=prob.device).unsqueeze(1).repeat(1, W).view(-1)
-        grid_x = torch.arange(W, dtype=prob.dtype, device=prob.device).repeat(H)
-        # Expand grids and compute expectation
+        # 创建归一化坐标网格 [-1, 1]
+        grid_y = torch.linspace(-1.0, 1.0, steps=H, dtype=prob.dtype, device=prob.device).unsqueeze(1).repeat(1, W).view(-1)
+        grid_x = torch.linspace(-1.0, 1.0, steps=W, dtype=prob.dtype, device=prob.device).repeat(H)
+        # 计算期望坐标
         grid_x = grid_x.unsqueeze(0).unsqueeze(0)  # [1,1,H*W]
         grid_y = grid_y.unsqueeze(0).unsqueeze(0)
-        x_coords = torch.sum(prob * grid_x, dim=2)
-        y_coords = torch.sum(prob * grid_y, dim=2)
-        keypoints = torch.stack([x_coords, y_coords], dim=2)  # [B, J, 2]
+        x_coords = torch.sum(prob * grid_x, dim=2)  # x坐标归一化值
+        y_coords = torch.sum(prob * grid_y, dim=2)  # y坐标归一化值
+        keypoints = torch.stack([x_coords, y_coords], dim=2)
         return heatmap_init, heatmap_refine, keypoints

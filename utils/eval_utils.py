@@ -50,22 +50,28 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
             for i in range(B):
                 idx = batch_idx * val_loader.batch_size + i
                 image_id = int(meta['image_id'][i])
-                # 原始 bbox
                 bbox = meta['bbox'][i].cpu().numpy()  # [x0,y0,w0,h0]
-                x0,y0,w0,h0 = bbox
+                x0, y0, w0, h0 = bbox
 
-                # 将 keypoints 从裁剪图坐标 映射回 原图坐标
+                # [MODIFIED] 原始为像素坐标，现在为归一化坐标 [-1, 1]
                 pts = kpts[i]  # shape [17,2] or [17,3]
-                xs = pts[:,0] / input_w * w0 + x0
-                ys = pts[:,1] / input_h * h0 + y0
+                norm_xs = pts[:, 0]
+                norm_ys = pts[:, 1]
                 if pts.shape[1] == 3:
-                    cs = pts[:,2]  # 网络输出的置信度
+                    cs = pts[:, 2]
                 else:
-                    cs = np.ones(17, dtype=np.float32)  # 或取热图 max 作为置信度
+                    cs = np.ones(17, dtype=np.float32)
 
-                # COCO 格式 keypoints 列表
+                # [MODIFIED] 将归一化坐标 [-1,1] -> 输入图像像素坐标
+                px = (norm_xs + 1.0) / 2.0 * (input_w - 1)
+                py = (norm_ys + 1.0) / 2.0 * (input_h - 1)
+
+                # [MODIFIED] 输入图像像素坐标 -> 原图坐标
+                xs = px / input_w * w0 + x0
+                ys = py / input_h * h0 + y0
+
                 keypoints_list = []
-                for x,y,c in zip(xs, ys, cs):
+                for x, y, c in zip(xs, ys, cs):
                     keypoints_list += [float(x), float(y), float(c)]
                 score = float(np.mean(cs))
 
