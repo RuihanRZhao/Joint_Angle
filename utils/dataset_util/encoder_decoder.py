@@ -143,6 +143,10 @@ def batch_heatmaps_to_keypoints(heatmaps_batch):
                 preds[n, j, 0] += float(torch.sign(diff_x)) * 0.25
                 preds[n, j, 1] += float(torch.sign(diff_y)) * 0.25
     # 将坐标和置信度拼接
+    print(max_vals.shape)
+    print(max_idxs.shape)
+    print(preds.shape)
+
     keypoints = torch.cat([preds, max_vals], dim=2)  # (B, J, 3)
     # 对于那些最大值为非正的点，置置信度为0（无检测信号）
     # （一般不会出现这种情况，除非网络未检测出该关节）
