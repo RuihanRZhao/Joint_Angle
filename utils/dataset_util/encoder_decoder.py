@@ -25,8 +25,12 @@ def keypoints_to_heatmaps(keypoints, output_size, sigma=2):
     # **按比例将原图坐标缩放到热图坐标系**（假设已知原图尺寸为 input_height, input_width）
     # 这里假设原图尺寸与热图尺寸的比例是恒定的。例如原图宽度=input_width，热图宽度=heatmap_width。
     # 如果原图尺寸未知，可根据数据集配置或上下文获取。以下示例假设下采样比例为 input_width/heatmap_width。
+
     input_width = heatmap_width * (1 if heatmap_width == 0 else (keypoints_arr[:, 0].max() / (heatmap_width - 1) if heatmap_width > 1 else 1))
     input_height = heatmap_height * (1 if heatmap_height == 0 else (keypoints_arr[:, 1].max() / (heatmap_height - 1) if heatmap_height > 1 else 1))
+
+    print(output_size)
+    print((input_height, input_width))
     # 计算缩放比例（热图尺寸 / 原图尺寸）
     scale_x = heatmap_width / input_width
     scale_y = heatmap_height / input_height
