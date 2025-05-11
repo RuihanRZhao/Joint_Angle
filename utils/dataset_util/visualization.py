@@ -71,7 +71,7 @@ def _draw(img_tensor, coords, color):
     返回同样 shape 的 Tensor。
     """
     # torchvision.draw_keypoints 要求 img_tensor 维度为 [C,H,W]，coords 为 [num_instances, K, 2]
-    drawn = torchvision.utils.draw_keypoints(img_tensor, coords, COCO_SKELETON, colors=color)
+    drawn = torchvision.utils.draw_keypoints(img_tensor, coords, COCO_SKELETON, colors=color[0])
     return drawn
 
 def _to_original_format(drawn_tensor, input_is_numpy, batch_dim):
