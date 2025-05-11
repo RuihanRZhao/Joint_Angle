@@ -20,6 +20,9 @@ learning_rate: !!float 1e-3
 div_factor: !!float 25.0
 warmup_pct: !!float 0.1
 
+max_samples_train: 1024
+max_samples_val: 64
+
 n_viz: 3
 
 num_workers_train: 24

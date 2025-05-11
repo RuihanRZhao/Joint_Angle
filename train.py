@@ -63,14 +63,16 @@ def main():
         ann_file="annotations/single_person_keypoints_train.json",
         img_dir="train",
         input_size=input_size,
-        return_meta=False
+        return_meta=False,
+        max_samples=config['max_samples_train'],
     )
     val_dataset = COCOPoseDataset(
         root=config['data_root'],
         ann_file="annotations/single_person_keypoints_val.json",
         img_dir="val",
         input_size=input_size,
-        return_meta=True
+        return_meta=True,
+        max_samples=config['max_samples_val'],
     )
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True,
                               num_workers=config['num_workers_train'], pin_memory=config['pin_memory'], prefetch_factor=config['prefetch_factor'])

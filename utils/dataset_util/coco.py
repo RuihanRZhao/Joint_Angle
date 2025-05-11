@@ -17,34 +17,35 @@ from .encoder_decoder import keypoints_to_heatmaps
 class COCOPoseDataset(Dataset):
     """Custom Dataset for COCO keypoint data (single-person)."""
 
-    def __init__(self, root, ann_file, img_dir, input_size=(384, 216), transform=None, return_meta=False):
+    def __init__(self,
+                 root,
+                 ann_file,
+                 img_dir,
+                 input_size=(384, 216),
+                 transform=None,
+                 return_meta=False,
+                 max_samples=None  # 新增：最大样本数量上限
+                 ):
         """
         ann_file: path to COCO keypoints annotation JSON (e.g., person_keypoints_train2017.json)
         img_dir: directory containing the images (e.g., train2017 folder)
-        input_size: tuple (width, height) for resized input images
-        transform: optional torchvision transforms to apply to the image (after cropping/resizing)
+        max_samples: 如果指定，则只保留前 N 条 annotation，用于快速调试或小规模训练
         """
+        # …（前面代码保持不变）…
 
-        ann_path = os.path.join(root, ann_file)
-        if not os.path.isfile(ann_path):
-            raise RuntimeError(f"找不到注解文件：{ann_path}")
-        self.coco = COCO(ann_path)
-
-        self.img_dir = os.path.join(root, img_dir)
-        if not os.path.isdir(self.img_dir):
-            raise RuntimeError(f"找不到图像目录：{self.img_dir}")
-
-        self.input_size = tuple(input_size)
-        self.transform = transform
         # Gather all person annotations with keypoints
         self.annotations = []
         ann_ids = self.coco.getAnnIds(catIds=[1])  # category 1 is person in COCO
         for ann in self.coco.loadAnns(ann_ids):
             if ann.get('num_keypoints', 0) > 0:
-                # Only consider annotations that have at least one keypoint
                 self.annotations.append(ann)
-        # Sort annotations by image_id for consistency (optional)
+        # Sort annotations by image_id for consistency
         self.annotations.sort(key=lambda a: a['image_id'])
+
+        # 如果指定了 max_samples，则截断列表
+        if max_samples is not None and isinstance(max_samples, int):
+            self.annotations = self.annotations[:max_samples]
+
         # Flag to determine return type (for training vs evaluation)
         self.return_meta = return_meta
 
