@@ -121,9 +121,9 @@ def main():
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
-                'best_loss': best_loss
+                'best_AP': best_ap
             }, best_path)
-            print(f"Saved new best model with loss {best_loss:.4f}")
+            print(f"Saved new best model with loss {best_ap:.8f}")
 
         wandb.log({
             "epoch": epoch + 1,
@@ -142,7 +142,7 @@ def main():
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict(),
         'scheduler': scheduler.state_dict(),
-        'best_loss': best_loss
+        'best_AP': best_ap
     }, final_path)
     print(f"\nTraining completed. Final model saved at {final_path}")
 
