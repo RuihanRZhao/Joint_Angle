@@ -19,7 +19,7 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
     viz_idxs = set(random.sample(range(total), min(n_viz, total)))
     with torch.no_grad():
         for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
-            bbox = meta['bbox'].squeeze(0).tolist()
+            bbox = meta['bbox'].tolist()
             img_tensor =img_tensor.to(device)
             pred_x, pred_y = model(img_tensor)
 
