@@ -29,6 +29,8 @@ def train_one_epoch(epoch, model, loader, criterion, optimizer, scheduler, coord
     for i, batch in tqdm(enumerate(loader), desc="Training", total=len(loader), unit="batch"):
         # Unpack batch to images, targets (and mask if provided)
         images, targets_heatmap, targets_keypoints, mask = batch
+        if i==0:  print(targets_heatmap)
+
         images = images.to(device)
         targets_heatmap = targets_heatmap.to(device)
         targets_keypoints = targets_keypoints.to(device)
