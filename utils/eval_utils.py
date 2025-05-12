@@ -17,6 +17,7 @@ def evaluate(model, val_loader, device, input_size, bins, coco_gt, n_viz=16):
     input_w, input_h = input_size
     all_indices = list(range(len(val_loader)))
     viz_indices = set(random.sample(all_indices, min(n_viz, len(all_indices))))
+    coco_gt = val_loader.dataset.coco
 
     with torch.no_grad():
         for i, (img_tensor, meta) in enumerate(val_loader):
