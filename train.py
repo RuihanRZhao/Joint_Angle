@@ -92,8 +92,8 @@ if __name__ == "__main__":
         wandb.log({
             "epoch": epoch + 1,
             "train/loss": metrics['total_loss'],
-            "train/heat_loss": metrics['x_loss'],
-            "train/kps_loss": metrics['y_loss'],
+            "train/x_loss": metrics['x_loss'],
+            "train/y_loss": metrics['y_loss'],
             "train/learning_rate": metrics['lr'],
             "val/mean_AP": mAP,
             "val/AP50": AP50,

@@ -6,27 +6,28 @@ import wandb
 from .network_utils import decode_simcc
 from .dataset_util import draw_pose_on_image
 from PIL import Image
+import random
 
 
-def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
+def evaluate(model, val_loader, device, input_size, bins, coco_gt, n_viz=16):
     model.eval()
     results = []
     viz_images = []
-    coco_gt = val_loader.dataset.coco
+
+    all_indices = list(range(len(val_loader)))
+    viz_indices = set(random.sample(all_indices, min(n_viz, len(all_indices))))
 
     with torch.no_grad():
-        for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
+        for i, (img_tensor, meta) in enumerate(val_loader):
             img_tensor = img_tensor.to(device)
             image_id = meta['image_id'].item()
-            bbox = meta['bbox'].squeeze(0).tolist()  # [x,y,w,h]
+            bbox = meta['bbox'].squeeze(0).tolist()
             area = bbox[2] * bbox[3]
 
-            # Forward pass
-            pred_x, pred_y, _ = model(img_tensor)  # add batch dim
+            pred_x, pred_y, _ = model(img_tensor)
             coords = decode_simcc(pred_x, pred_y, input_size=input_size, bins=bins)  # [1, K, 2]
             keypoints = coords[0].cpu().numpy()
 
-            # 生成 COCO keypoints 格式 (x1,y1,v1,...,xJ,yJ,vJ)
             keypoints_flat = []
             for (x, y) in keypoints:
                 keypoints_flat.extend([float(x), float(y), 2.0])
@@ -40,14 +41,13 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
                 'bbox': bbox
             })
 
-            # 可视化图像
-            if i < n_viz:
-                orig_img = Image.open(os.path.join(val_loader.dataset.img_dir, val_loader.dataset.coco.loadImgs(image_id)[0]['file_name'])).convert('RGB')
-                vis_img = draw_pose_on_image(orig_img.copy(), coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id, catIds=[1]))[0]['keypoints'],(0, 255, 0))
-                vis_img = draw_pose_on_image(vis_img, keypoints_flat, (0,0,255))
-                viz_images.append(wandb.Image(vis_img, caption=f"ID[{image_id}]"))
+            if i in viz_indices:
+                file_name = val_loader.dataset.coco.loadImgs(image_id)[0]['file_name']
+                img_path = os.path.join(val_loader.dataset.img_dir, file_name)
+                orig_img = Image.open(img_path).convert('RGB')
+                vis_img = draw_pose_on_image(orig_img, keypoints_flat)
+                viz_images.append(wandb.Image(vis_img, caption=f"ID: {image_id}"))
 
-    # 调用 COCOeval
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, 'keypoints')
     coco_eval.evaluate()
