@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
     for epoch in range(start_epoch, config['epochs']):
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
-        metrics = train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device, epoch, input_size, config['bins'])
+        metrics = train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device, epoch)
 
         mAP, AP50, vis_images = evaluate(model, val_loader, device, input_size, config['bins'], config['coco_val_gt'], n_viz=config['n_viz'])
 
