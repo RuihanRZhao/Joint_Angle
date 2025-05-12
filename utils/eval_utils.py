@@ -16,7 +16,7 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
         for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
             img_tensor = img_tensor.to(device)
             image_id = meta['image_id'].item()
-            bbox = meta['bbox'].cpu().numpy().tolist()  # [x,y,w,h]
+            bbox = meta['bbox'].squeeze(0).tolist()  # [x,y,w,h]
             area = bbox[2] * bbox[3]
 
             # Forward pass
