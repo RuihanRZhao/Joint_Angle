@@ -5,6 +5,8 @@ checkpoint_root: 'run/checkpoints'
 # dataset build
 person_margin_ratio: !!float 0.1
 
+bins: 4
+
 # resume stuff
 resume: !!bool False
 resume_id: 1
