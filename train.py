@@ -56,9 +56,9 @@ if __name__ == "__main__":
         bins=config['bins']
     )
     val_dataset = COCOPoseDataset(
-        root=config['data_root'],
-        ann_file="annotations/single_person_keypoints_val.json",
-        img_dir="val",
+        root=config['data_root_val'],
+        ann_file=config['ann_file_val'],
+        img_dir='',  # 留空表示 img_dir 相对于 ann 文件中的 file_name
         input_size=input_size,
         return_meta=True,
         max_samples=config['max_samples_val'],
