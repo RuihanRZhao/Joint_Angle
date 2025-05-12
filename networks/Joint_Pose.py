@@ -1,96 +1,152 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .components import InvertedResidual, GhostBottleneck
+
+class ConvBNAct(nn.Module):
+    """Convolution followed by BatchNorm and activation."""
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, groups=1, act=True):
+        super(ConvBNAct, self).__init__()
+        padding = kernel_size // 2  # assume square kernel, simple padding
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride,
+                               padding, groups=groups, bias=False)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.act = nn.SiLU() if act else nn.Identity()  # SiLU activation (Swish)
+    def forward(self, x):
+        return self.act(self.bn(self.conv(x)))
+
+class Residual(nn.Module):
+    """Basic residual block: 3x3 conv -> 3x3 conv with skip connection."""
+    def __init__(self, channels):
+        super(Residual, self).__init__()
+        self.conv1 = ConvBNAct(channels, channels, kernel_size=3, stride=1)
+        self.conv2 = ConvBNAct(channels, channels, kernel_size=3, stride=1, act=False)
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.conv2(out)
+        return F.silu(out + x)  # use SiLU for the fused activation
+
+class CSPBlock(nn.Module):
+    """
+    Cross Stage Partial (CSP) Block: splits input channels, processes one part, then concatenates.
+    Args:
+        in_channels (int): input channels.
+        out_channels (int): output channels.
+        n (int): number of residual blocks in the partial path.
+        expansion (float): ratio for hidden channels relative to out_channels.
+    """
+    def __init__(self, in_channels, out_channels, n=1, expansion=0.5):
+        super(CSPBlock, self).__init__()
+        hidden_channels = int(out_channels * expansion)
+        # Split: two conv layers generate two feature parts
+        self.conv1 = ConvBNAct(in_channels, hidden_channels, kernel_size=1)
+        self.conv2 = ConvBNAct(in_channels, hidden_channels, kernel_size=1)
+        # Residual blocks on the first part
+        self.m = nn.Sequential(*[Residual(hidden_channels) for _ in range(n)])
+        # Concat and fuse
+        self.conv3 = ConvBNAct(hidden_channels * 2, out_channels, kernel_size=1)
+    def forward(self, x):
+        y1 = self.conv1(x)
+        y1 = self.m(y1)
+        y2 = self.conv2(x)
+        out = torch.cat([y1, y2], dim=1)
+        return self.conv3(out)
 
 class JointPoseNet(nn.Module):
-    def __init__(self, num_joints=17, input_size=(384, 216), bins=4):
+    """
+    JointPoseNet: Pose estimation network with CSPNeXt-style backbone and SimCC head.
+    Args:
+        num_keypoints (int): number of keypoints (K).
+        bins (int): bins per pixel for SimCC (default 4, common choices 2, 4, 10).
+        image_size (int): input image size (assumed square, default 384).
+    """
+    def __init__(self, num_keypoints, bins=4, image_size=384):
         super(JointPoseNet, self).__init__()
-        self.num_joints = num_joints
-        self.input_w, self.input_h = input_size
+        self.num_keypoints = num_keypoints
         self.bins = bins
-        self.out_w = self.input_w // 4
-        self.out_h = self.input_h // 4
-        self.x_classes = self.out_w * bins
-        self.y_classes = self.out_h * bins
-
-        # Backbone (MobileNetV2-like)
-        self.backbone = nn.ModuleList()
-        input_channels = 32
-        self.backbone.append(nn.Sequential(
-            nn.Conv2d(3, input_channels, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(input_channels),
-            nn.ReLU6(inplace=True)
-        ))
-        mobilenet_cfg = [
-            (1, 16, 1, 1), (6, 24, 2, 2), (6, 32, 3, 2),
-            (6, 64, 4, 2), (6, 96, 3, 1), (6, 160, 3, 1)
-        ]
-        in_ch = input_channels
-        for t, c, n, s in mobilenet_cfg:
-            for i in range(n):
-                stride = s if i == 0 else 1
-                use_se = c >= 64 and i == n - 1
-                block = InvertedResidual(in_ch, c, stride, expand_ratio=t, use_se=use_se)
-                self.backbone.append(block)
-                in_ch = c
-
-        # High-res branch
-        self.highres_branch = nn.ModuleList([
-            GhostBottleneck(24, 48, 24, 1, use_se=False),
-            GhostBottleneck(24, 48, 32, 1, use_se=True),
-            GhostBottleneck(32, 64, 32, 1, use_se=False)
-        ])
-
-        # Upsample
-        self.upsample1 = nn.Upsample(scale_factor=2)  # 1/16 -> 1/8
-        self.upsample2 = nn.Upsample(scale_factor=2)  # 1/8 -> 1/4
-
-        # Feature fusion output
-        self.fuse_conv = nn.Conv2d(160, 64, kernel_size=3, padding=1)
-
-        # SimCC output heads
-        self.keypoint_x_head = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, num_joints * self.x_classes, kernel_size=1),
-            nn.AdaptiveAvgPool2d((1, 1))
-        )
-        self.keypoint_y_head = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, num_joints * self.x_classes, kernel_size=1),
-            nn.AdaptiveAvgPool2d((1, 1))
-        )
+        # Calculate final feature map size (after upsample fusion, 1/4 of input)
+        feat_map_size = image_size // 4  # 384 -> 96
+        # Backbone: Stem + Stages with CSP blocks
+        self.stem = ConvBNAct(3, 64, kernel_size=3, stride=2)         # 1/2 size
+        # Stage 1: 1/4 size
+        self.conv_down1 = ConvBNAct(64, 128, kernel_size=3, stride=2) # 1/4 size
+        self.csp1 = CSPBlock(128, 128, n=1)
+        # Stage 2: 1/8 size
+        self.conv_down2 = ConvBNAct(128, 256, kernel_size=3, stride=2) # 1/8 size
+        self.csp2 = CSPBlock(256, 256, n=2)
+        # Stage 3: 1/16 size
+        self.conv_down3 = ConvBNAct(256, 512, kernel_size=3, stride=2) # 1/16 size
+        self.csp3 = CSPBlock(512, 512, n=2)
+        # Feature fusion modules (upsample and merge higher-level features with lower-level)
+        self.reduce_conv3 = ConvBNAct(512, 256, kernel_size=1)  # reduce stage3 channels to stage2's
+        self.fuse_conv2   = ConvBNAct(256, 256, kernel_size=3)  # fuse stage3 into stage2
+        self.reduce_conv2 = ConvBNAct(256, 128, kernel_size=1)  # reduce fused stage2 to stage1's channels
+        self.fuse_conv1   = ConvBNAct(128, 128, kernel_size=3)  # fuse stage2 into stage1 (final feature map)
+        # SimCC head: produce separate x and y distributions
+        # Conv layers to collapse one spatial dimension:
+        self.conv_x = nn.Conv2d(128, num_keypoints, kernel_size=(feat_map_size, 1),
+                                 stride=(feat_map_size, 1), bias=True)
+        self.conv_y = nn.Conv2d(128, num_keypoints, kernel_size=(1, feat_map_size),
+                                 stride=(1, feat_map_size), bias=True)
+        # Transposed conv (1D) to upsample collapsed features by 'bins' times for finer classification
+        self.conv_transpose_x = nn.ConvTranspose1d(num_keypoints, num_keypoints,
+                                                   kernel_size=bins, stride=bins,
+                                                   groups=num_keypoints, bias=False)
+        self.conv_transpose_y = nn.ConvTranspose1d(num_keypoints, num_keypoints,
+                                                   kernel_size=bins, stride=bins,
+                                                   groups=num_keypoints, bias=False)
+        # Initialize transposed conv kernels to replicate values (near uniform)
+        nn.init.constant_(self.conv_transpose_x.weight, 1.0)
+        nn.init.constant_(self.conv_transpose_y.weight, 1.0)
+        if self.conv_transpose_x.bias is not None:
+            nn.init.zeros_(self.conv_transpose_x.bias)
+        if self.conv_transpose_y.bias is not None:
+            nn.init.zeros_(self.conv_transpose_y.bias)
 
     def forward(self, x):
-        features = x
-        highres_input = None
+        # Backbone forward
+        x = self.stem(x)
+        stage1 = self.csp1(self.conv_down1(x))    # 1/4
+        stage2 = self.csp2(self.conv_down2(stage1))  # 1/8
+        stage3 = self.csp3(self.conv_down3(stage2))  # 1/16
+        # Feature fusion
+        # Upsample stage3 to stage2 resolution and fuse
+        stage3_up = F.interpolate(self.reduce_conv3(stage3), size=stage2.shape[-2:], mode='nearest')
+        fuse2 = self.fuse_conv2(stage3_up + stage2)
+        # Upsample fused stage2 to stage1 resolution and fuse
+        fuse2_up = F.interpolate(self.reduce_conv2(fuse2), size=stage1.shape[-2:], mode='nearest')
+        fused_final = self.fuse_conv1(fuse2_up + stage1)  # final feature at 1/4 resolution
+        # SimCC Head: produce x-axis and y-axis logits
+        # X-axis: collapse height dimension
+        x_feat = self.conv_x(fused_final)        # [B, K, 1, W_feat]
+        x_feat = x_feat.squeeze(2)               # [B, K, W_feat]
+        x_logits = self.conv_transpose_x(x_feat) # [B, K, W_feat * bins]
+        # Y-axis: collapse width dimension
+        y_feat = self.conv_y(fused_final)        # [B, K, H_feat, 1]
+        y_feat = y_feat.squeeze(3)               # [B, K, H_feat]
+        y_logits = self.conv_transpose_y(y_feat) # [B, K, H_feat * bins]
+        return x_logits, y_logits
 
-        for idx, layer in enumerate(self.backbone):
-            features = layer(features)
-            if idx == 3:
-                highres_input = features
-
-        up1 = self.upsample1(features)
-        up2 = self.upsample2(up1)  # [B, C, H/4, W/4]
-        fused = self.fuse_conv(up2)
-
-        # Classification logits
-        B = x.size(0)
-        out_x = self.keypoint_x_head(fused).view(B, self.num_joints, self.x_classes)
-        out_y = self.keypoint_y_head(fused).view(B, self.num_joints, self.y_classes)
-
-        # Softmax decoding
-        prob_x = F.softmax(out_x, dim=2)
-        prob_y = F.softmax(out_y, dim=2)
-
-        # Compute expected coordinates (soft-argmax)
-        device = x.device
-        index_x = torch.arange(self.x_classes, device=device).float().view(1, 1, -1)
-        index_y = torch.arange(self.y_classes, device=device).float().view(1, 1, -1)
-        coord_x = (prob_x * index_x).sum(dim=2) * (self.input_w / self.x_classes)
-        coord_y = (prob_y * index_y).sum(dim=2) * (self.input_h / self.y_classes)
-        keypoints = torch.stack([coord_x, coord_y], dim=2)  # [B, K, 2]
-
-        return out_x, out_y, keypoints
+    def load_pretrained_backbone(self, state_dict_or_path):
+        """
+        Load pretrained weights for backbone layers (e.g., ImageNet-1K).
+        Skips head and fusion layers.
+        Args:
+            state_dict_or_path: state dict object or path to .pth file.
+        """
+        # Load the state dictionary
+        if isinstance(state_dict_or_path, str):
+            state_dict = torch.load(state_dict_or_path, map_location='cpu')
+            if isinstance(state_dict, dict) and 'state_dict' in state_dict:
+                state_dict = state_dict['state_dict']
+        else:
+            state_dict = state_dict_or_path
+        model_dict = self.state_dict()
+        filtered_dict = {}
+        for k, v in state_dict.items():
+            if k in model_dict and model_dict[k].shape == v.shape:
+                # Only load backbone-related layers
+                if not (k.startswith('conv_x') or k.startswith('conv_y') or k.startswith('conv_transpose') or
+                        k.startswith('fuse_conv') or k.startswith('reduce_conv')):
+                    filtered_dict[k] = v
+        model_dict.update(filtered_dict)
+        self.load_state_dict(model_dict, strict=False)

@@ -38,7 +38,7 @@ if __name__ == "__main__":
 
 
 
-    input_size = (config['input_w'], config['input_h'])
+    input_size = (config['input_size'], config['input_size'])
     os.makedirs(config['checkpoint_root'], exist_ok=True)
 
     train_dataset = COCOPoseDataset(
@@ -55,7 +55,7 @@ if __name__ == "__main__":
                             num_workers=config['num_workers_val'], pin_memory=config['pin_memory'])
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = JointPoseNet(num_joints=17, input_size=input_size, bins=config['bins']).to(device)
+    model = JointPoseNet(num_keypoints=17, bins=config['bins'], image_size=config['input_size']).to(device)
     criterion = SimCCLoss()
     optimizer = AdamW(model.parameters(), lr=config['learning_rate'], weight_decay=1e-4)
 
