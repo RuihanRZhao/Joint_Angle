@@ -23,8 +23,8 @@ warmup_pct: !!float 0.1
 
 weight_warm_pct: 10
 
-max_samples_train: 0
-max_samples_val: 0
+max_samples_train: 1024
+max_samples_val: 64
 
 n_viz: 3
 
@@ -36,6 +36,3 @@ pin_memory: !!bool True
 prefetch_factor: 4
 
 wandb: online
-
-
-
