@@ -76,8 +76,8 @@ class JointPoseNet(nn.Module):
 
         # Classification logits
         B = x.size(0)
-        out_x = self.keypoint_x_head(fused).view(B, self.num_joints, self.x_classes)
-        out_y = self.keypoint_y_head(fused).view(B, self.num_joints, self.y_classes)
+        out_x = self.keypoint_x_head(fused).squeeze(-1).squeeze(-1).view(B, self.num_joints, self.x_classes)
+        out_y = self.keypoint_y_head(fused).squeeze(-1).squeeze(-1).view(B, self.num_joints, self.y_classes)
 
         # Softmax decoding
         prob_x = F.softmax(out_x, dim=2)
