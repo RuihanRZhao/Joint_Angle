@@ -100,7 +100,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
     # COCOeval
     coco_dt = coco_gt.loadRes(results)
 
-    print(coco_gt, coco_dt)
+    print(coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id, catIds=[1])), coco_dt.loadAnns(coco_gt.getAnnIds(imgIds=image_id, catIds=[1])))
 
     coco_eval = COCOeval(coco_gt, coco_dt, 'keypoints')
 
