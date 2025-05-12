@@ -50,9 +50,9 @@ if __name__ == "__main__":
         img_dir="val", input_size=input_size, return_meta=True, max_samples=config['max_samples_val'], bins=config['bins']
     )
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True,
-                              num_workers=config['num_workers_train'], pin_memory=config['pin_memory'])
+                              num_workers=config['num_workers_train'], pin_memory=config['pin_memory'], prefetch_factor=config['prefetch_factor'])
     val_loader = DataLoader(val_dataset, batch_size=config['batch_size_val'], shuffle=False,
-                            num_workers=config['num_workers_val'], pin_memory=config['pin_memory'])
+                            num_workers=config['num_workers_val'], pin_memory=config['pin_memory'], prefetch_factor=config['prefetch_factor'])
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = JointPoseNet(num_keypoints=17, bins=config['bins'], image_size=config['input_size']).to(device)
