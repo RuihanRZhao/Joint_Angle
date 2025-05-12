@@ -98,6 +98,8 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
                     viz_images.append(wandb.Image(vis, caption=f"ID:{image_id}"))
 
     # COCOeval
+    coco_dt = coco_gt.loadRes(results)
+
     coco_eval = COCOeval(coco_gt, coco_dt, 'keypoints')
 
     # —— 强制覆盖 ——
