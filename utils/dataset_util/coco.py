@@ -30,7 +30,7 @@ class COCOPoseDataset(Dataset):
                  input_size=(384, 216),
                  transform=None,
                  return_meta=False,
-                 max_samples=None,
+                 max_samples=0,
                  bins=4,                # 每像素细分子区数量
                  downsample=4           # 下采样倍数，与模型解码一致
                  ):
@@ -62,7 +62,7 @@ class COCOPoseDataset(Dataset):
                 valid_annotations.append(a)
 
         self.annotations = sorted(valid_annotations, key=lambda x: x['image_id'])
-        if max_samples:
+        if max_samples != 0:
             self.annotations = self.annotations[:max_samples]
 
         # 默认变换

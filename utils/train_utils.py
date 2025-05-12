@@ -19,7 +19,7 @@ def train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device
         target_index_y = target_y.argmax(dim=2)
 
         # Forward
-        pred_x, pred_y, _ = model(images)
+        pred_x, pred_y = model(images)
         loss_dict = criterion(pred_x, pred_y, target_index_x, target_index_y, mask)
 
         loss = loss_dict['total_loss']

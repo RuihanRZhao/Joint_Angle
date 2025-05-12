@@ -21,7 +21,7 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
         for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
             bbox = meta['bbox'].squeeze(0).tolist()
             img_tensor =img_tensor.to(device)
-            pred_x, pred_y, _ = model(img_tensor)
+            pred_x, pred_y = model(img_tensor)
 
             keypoints = decode_simcc(pred_x, pred_y, input_size, bins)  # [B, K, 2]
             kps = keypoints[0].cpu().numpy()  # [K,2]

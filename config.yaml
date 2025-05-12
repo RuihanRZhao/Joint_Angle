@@ -23,8 +23,8 @@ warmup_pct: !!float 0.1
 
 weight_warm_pct: 10
 
-max_samples_train: None
-max_samples_val: None
+max_samples_train: 1024
+max_samples_val: 64
 
 n_viz: 3
 
