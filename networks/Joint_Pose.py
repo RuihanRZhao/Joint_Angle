@@ -50,7 +50,7 @@ class JointPoseNet(nn.Module):
         self.upsample2 = nn.Upsample(scale_factor=2)   # upsample 1/8 -> 1/4
         # Convolution layers for heatmap prediction
         self.heatmap_conv1 = nn.Conv2d(160, num_joints, kernel_size=1)
-        self.refine_conv1 = nn.Conv2d(64 + num_joints, 64, kernel_size=3, padding=1)
+        self.refine_conv1 = nn.Conv2d(41 + num_joints, 64, kernel_size=3, padding=1)
         self.heatmap_conv2 = nn.Conv2d(64, num_joints, kernel_size=1)
 
 
