@@ -11,11 +11,11 @@ bins: 4
 resume: !!bool False
 resume_id: 1
 
-input_size: !!int 256
+input_size: !!int 384
 
 epochs: 200
-batch_size: 256
-learning_rate: !!float 1e-3
+batch_size: 512
+learning_rate: !!float 2e-3
 
 # optimizer and scheduler
 div_factor: !!float 25.0
@@ -23,13 +23,15 @@ warmup_pct: !!float 0.1
 
 weight_warm_pct: 10
 
-max_samples_train: 1024
-max_samples_val: 64
+max_samples_train: 0
+max_samples_val: 0
 
 n_viz: 3
 
 num_workers_train: 24
 num_workers_val: 16
+batch_size_val: 128
+
 pin_memory: !!bool True
 prefetch_factor: 4
 

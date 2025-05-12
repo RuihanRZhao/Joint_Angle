@@ -51,7 +51,7 @@ if __name__ == "__main__":
     )
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True,
                               num_workers=config['num_workers_train'], pin_memory=config['pin_memory'])
-    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
+    val_loader = DataLoader(val_dataset, batch_size=config['batch_size_val'], shuffle=False,
                             num_workers=config['num_workers_val'], pin_memory=config['pin_memory'])
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
