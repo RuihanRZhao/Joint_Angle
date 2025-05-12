@@ -1,6 +1,10 @@
 import os
 import numpy as np
+import time
 from PIL import Image
+import zipfile
+from tqdm import tqdm
+import requests
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
@@ -126,3 +130,86 @@ class COCOPoseDataset(Dataset):
             torch.from_numpy(target_y),
             torch.from_numpy(mask)
         )
+
+
+def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
+    """
+    确保 root 下存在 COCO 2017 的 train/val 图像和注解。
+    如果缺失，则从官方 URL 下载并解压。
+    支持重试机制和友好提示。
+
+    Args:
+        root (str): 数据根目录，比如 "data/coco"
+        retries (int): 最多重试次数
+        backoff_factor (float): 每次重试等待时间的增长因子
+    Raises:
+        RuntimeError: 下载或解压多次失败后抛出
+    """
+    os.makedirs(root, exist_ok=True)
+
+    # COCO 官方下载链接
+    urls = {
+        "train2017.zip":   "http://images.cocodataset.org/zips/train2017.zip",
+        "val2017.zip":     "http://images.cocodataset.org/zips/val2017.zip",
+        "annotations.zip": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
+    }
+
+    for fname, url in urls.items():
+        zip_path = os.path.join(root, fname)
+        target_folder = {
+            "train2017.zip":   os.path.join(root, "train2017"),
+            "val2017.zip":     os.path.join(root, "val2017"),
+            "annotations.zip": os.path.join(root, "annotations"),
+        }[fname]
+
+        # 如果文件夹已经存在，则跳过
+        if os.path.isdir(target_folder):
+            continue
+
+        # 否则，需要下载并解压
+        for attempt in range(1, retries + 1):
+            try:
+                print(f"[COCO] 第 {attempt} 次尝试下载 {fname} ...")
+                resp = requests.get(url, stream=True, timeout=10)
+                resp.raise_for_status()
+
+                # 写入本地 zip
+                total = int(resp.headers.get('content-length', 0))
+                with open(zip_path, 'wb') as f, tqdm(
+                    desc=f"Downloading {fname}",
+                    total=total,
+                    unit='B',
+                    unit_scale=True
+                ) as pbar:
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                            pbar.update(len(chunk))
+
+                # 成功下载，跳出重试循环
+                break
+
+            except requests.exceptions.RequestException as e:
+                print(f"[COCO] 下载失败（{e}）")
+                if attempt < retries:
+                    wait = backoff_factor ** (attempt - 1)
+                    print(f"[COCO] {wait:.1f}s 后重试…")
+                    time.sleep(wait)
+                else:
+                    raise RuntimeError(f"多次下载 {fname} 失败，请检查网络或手动下载安装：{url}")
+
+        # 解压 zip
+        print(f"[COCO] 解压 {zip_path} → {target_folder}")
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                # 获取所有文件的列表
+                file_list = z.namelist()
+
+                # 使用tqdm显示解压进度
+                with tqdm(total=len(file_list), desc="Unzipping", unit="file") as pbar:
+                    for file in file_list:
+                        z.extract(file, root)
+                        pbar.update(1)
+
+        except zipfile.BadZipFile as e:
+            raise RuntimeError(f"解压 {zip_path} 失败：{e}")
