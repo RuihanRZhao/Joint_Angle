@@ -6,10 +6,11 @@ from .network_utils import decode_simcc
 from .dataset_util import draw_pose_on_image
 
 
-def evaluate(model, val_loader, device, input_size, bins, coco_gt, n_viz=16):
+def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
     model.eval()
     results = []
     viz_images = []
+    coco_gt = val_loader.dataset.coco
 
     with torch.no_grad():
         for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
