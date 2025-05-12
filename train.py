@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, SequentialLR, LinearLR
-
+import time
 
 import wandb
 
@@ -102,12 +102,16 @@ if __name__ == "__main__":
     wandb.watch(model, log="all", log_freq=100)
 
     for epoch in range(start_epoch, config['epochs']):
+        start_time = time.time()
+
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
         metrics = train_one_epoch(model, train_loader, criterion, optimizer, scheduler=None, device=device, epoch=epoch)
 
         mAP, AP50, vis_images = evaluate(model, val_loader, device, input_size, config['bins'], n_viz=config['n_viz'])
 
-        print(f"Ep {epoch+1}: Total Loss: {metrics['total_loss']:.8f} | X: {metrics['x_loss']:.8f} | Y: {metrics['y_loss']:.8f} | mAP: {mAP:.12f} | AP50: {AP50:.12f}")
+        time_elapsed = time.time() - start_time
+
+        print(f"Ep {epoch+1}: Total Loss: {metrics['total_loss']:.8f} | X: {metrics['x_loss']:.8f} | Y: {metrics['y_loss']:.8f} | mAP: {mAP:.12f} | AP50: {AP50:.12f} | time_elapsed: {time_elapsed:.8f}")
 
         scheduler.step()
 
@@ -126,6 +130,7 @@ if __name__ == "__main__":
         # Log
         wandb.log({
             "epoch": epoch + 1,
+            "epoch/time": time_elapsed,
             "train/loss": metrics['total_loss'],
             "train/x_loss": metrics['x_loss'],
             "train/y_loss": metrics['y_loss'],
