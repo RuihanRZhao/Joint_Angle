@@ -41,7 +41,7 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
             # 可视化图像
             if i < n_viz:
                 from torchvision.transforms.functional import to_pil_image
-                orig_img = to_pil_image(img_tensor.cpu())
+                orig_img = to_pil_image(img_tensor.squeeze(0).cpu())
                 vis_img = draw_pose_on_image(orig_img.copy(), coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=image_id, catIds=[1]))[0]['keypoints'],(0, 255, 0))
                 vis_img = draw_pose_on_image(orig_img.copy(), keypoints_flat, (0,0,255))
                 viz_images.append(wandb.Image(vis_img, caption=f"ID[{image_id}]"))
