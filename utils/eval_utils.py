@@ -20,7 +20,7 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
             area = bbox[2] * bbox[3]
 
             # Forward pass
-            pred_x, pred_y, _ = model(img_tensor.unsqueeze(0))  # add batch dim
+            pred_x, pred_y, _ = model(img_tensor)  # add batch dim
             coords = decode_simcc(pred_x, pred_y, input_size=input_size, bins=bins)  # [1, K, 2]
             keypoints = coords[0].cpu().numpy()
 
