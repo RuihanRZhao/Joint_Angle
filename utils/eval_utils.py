@@ -20,6 +20,7 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
     with torch.no_grad():
         for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
             bbox = meta['bbox'].squeeze(0).tolist()
+            img_tensor =img_tensor.to(device)
             pred_x, pred_y, _ = model(img_tensor)
 
             keypoints = decode_simcc(pred_x, pred_y, input_size, bins)  # [B, K, 2]
