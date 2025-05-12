@@ -1,23 +1,18 @@
-
 # 图像处理
-pillow         # 图像读写
-opencv-python  # OpenCV 接口
-
+pillow
+opencv-python
 
 # 科学计算
-numpy          # 数值计算
+numpy
+scipy
 
 # 日志与可视化
-wandb          # 训练可视化与日志
+wandb
+matplotlib
 
 # 配套工具
-pydantic<2.0.0
 pycocotools
-
-tqdm
-
-spicy
-
+pydantic
 PyYAML
-
 albumentations
+tqdm

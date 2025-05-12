@@ -120,9 +120,8 @@ if __name__ == "__main__":
         start_time = time.time()
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
 
-        metrics = train_one_epoch(model, train_loader, criterion, optimizer,
-                                  device=device, epoch=epoch,
-                                  scaler=scaler, ema_model=ema_model)
+        metrics = train_one_epoch(model, train_loader, criterion, optimizer, scheduler,
+                                  device=device, epoch=epoch)
 
         scheduler.step()
 
