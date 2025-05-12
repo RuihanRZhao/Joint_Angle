@@ -100,7 +100,7 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
     # COCOeval
     coco_dt = coco_gt.loadRes(results)
 
-    print(results)
+    print(coco_gt, coco_dt)
 
     coco_eval = COCOeval(coco_gt, coco_dt, 'keypoints')
 
