@@ -15,7 +15,7 @@ input_size: !!int 384
 
 epochs: 200
 batch_size: 512
-learning_rate: !!float 2e-3
+learning_rate: !!float 5e-3
 
 # optimizer and scheduler
 div_factor: !!float 25.0

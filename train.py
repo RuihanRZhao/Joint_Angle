@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, SequentialLR, LinearLR
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 
 import wandb
 
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     ema_model = clone_ema_model(model)  # EMA 初始化
     criterion = SimCCLoss(use_soft=True)
     optimizer = AdamW(model.parameters(), lr=config['learning_rate'], weight_decay=1e-4)
-    scaler = GradScaler()
+    scaler = GradScaler('cuda')
 
     warmup_epochs = int(config['epochs'] * config['warmup_pct'])
 
