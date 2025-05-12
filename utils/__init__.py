@@ -7,8 +7,4 @@ from .train_utils import train_one_epoch
 from .eval_utils import evaluate
 
 from .dataset_util import (COCOPoseDataset, ensure_coco_data,
-                           draw_pose_on_image,
-                          keypoints_to_heatmaps,
-                          batch_keypoints_to_heatmaps,
-                          heatmaps_to_keypoints,
-                          batch_heatmaps_to_keypoints)
+                           draw_pose_on_image)
