@@ -9,11 +9,6 @@ import random
 import wandb
 
 def evaluate(model, val_loader, device, input_size, bins, n_viz=16, conf_threshold=0.0):
-    """
-    适配 SimCC 坐标体系的评估函数（新版）：
-    - 不再使用 bbox 映射坐标
-    - 直接将预测从 input_size 缩放至原图尺寸
-    """
     model.eval()
     results = []
     viz_images = []
@@ -25,59 +20,78 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16, conf_thresho
 
     with torch.no_grad():
         for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
-            img_id = int(meta['image_id'])
-            img_tensor = img_tensor.to(device)
+            try:
+                img_id = int(meta['image_id'])
+                img_tensor = img_tensor.to(device)
 
-            # 模型前向
-            pred_x, pred_y = model(img_tensor)
-            coords, conf = decode_simcc(pred_x, pred_y, input_size, bins, return_score=True)
+                # Forward pass
+                pred_x, pred_y = model(img_tensor)
+                print(f"[{i}] pred_x.shape: {pred_x.shape}, pred_y.shape: {pred_y.shape}")
 
-            # 取第一个样本
-            kps = coords[0].cpu().numpy()  # [K, 2]
-            scores = conf[0].cpu().numpy()  # [K]
+                coords, conf = decode_simcc(pred_x, pred_y, input_size, bins, return_score=True)
+                print(f"[{i}] decoded coords shape: {coords.shape}, conf shape: {conf.shape}")
 
-            # 获取原图尺寸（从 COCO GT 信息）
-            orig_img_info = coco_gt.loadImgs(img_id)[0]
-            orig_w, orig_h = orig_img_info['width'], orig_img_info['height']
+                kps = coords[0].cpu().numpy()
+                scores = conf[0].cpu().numpy()
 
-            # 坐标缩放回原图尺寸
-            kps[:, 0] = kps[:, 0] / input_w * orig_w
-            kps[:, 1] = kps[:, 1] / input_h * orig_h
+                # 原图尺寸
+                img_info = coco_gt.loadImgs(img_id)[0]
+                orig_w, orig_h = img_info['width'], img_info['height']
+                print(f"[{i}] Original image size: ({orig_w}, {orig_h})")
 
-            # 构建 COCO 格式关键点
-            keypoints_flat = []
-            for (x, y), s in zip(kps, scores):
-                v = 2 if s >= conf_threshold else 1  # 2=visible, 1=low conf
-                keypoints_flat.extend([float(x), float(y), v])
+                # 还原坐标
+                kps[:, 0] = kps[:, 0] / input_w * orig_w
+                kps[:, 1] = kps[:, 1] / input_h * orig_h
 
-            result = {
-                'image_id': img_id,
-                'category_id': 1,
-                'keypoints': keypoints_flat,
-                'score': float(scores.mean()),
-            }
-            results.append(result)
+                # 关键点展平
+                keypoints_flat = []
+                for (x, y), s in zip(kps, scores):
+                    v = 2 if s >= conf_threshold else 1
+                    keypoints_flat.extend([float(x), float(y), v])
 
-            # 可视化（随机采样）
-            if i in viz_idxs:
-                orig_img_path = os.path.join(val_loader.dataset.img_dir, orig_img_info['file_name'])
-                orig_img = Image.open(orig_img_path).convert('RGB')
+                print(f"[{i}] Sample keypoint: {keypoints_flat[:6]}")
 
-                # 加载GT关键点
-                ann_ids = coco_gt.getAnnIds(imgIds=img_id, catIds=[1])
-                if not ann_ids:
+                result = {
+                    'image_id': img_id,
+                    'category_id': 1,
+                    'keypoints': keypoints_flat,
+                    'score': float(scores.mean())
+                }
+
+                if all(p == 0 for p in keypoints_flat):
+                    print(f"[{i}] ⚠️ Warning: All keypoints zero → skipping")
                     continue
-                gt_kps = coco_gt.loadAnns(ann_ids)[0]['keypoints']
 
-                vis_img = draw_pose_on_image(orig_img.copy(), gt_kps, color=(0, 255, 0))  # GT绿色
-                vis_img = draw_pose_on_image(vis_img, keypoints_flat, color=(255, 0, 0))  # Pred红色
-                viz_images.append(wandb.Image(vis_img, caption=f"ID[{img_id}]"))
+                results.append(result)
 
-    # === COCO Evaluation ===
+                # 可视化
+                if i in viz_idxs:
+                    img_path = os.path.join(val_loader.dataset.img_dir, img_info['file_name'])
+                    if not os.path.exists(img_path):
+                        print(f"[{i}] ⚠️ Image path not found: {img_path}")
+                        continue
+
+                    orig_img = Image.open(img_path).convert("RGB")
+                    ann_ids = coco_gt.getAnnIds(imgIds=img_id, catIds=[1])
+                    if not ann_ids:
+                        print(f"[{i}] ⚠️ No GT ann found for image_id={img_id}")
+                        continue
+
+                    gt_kps = coco_gt.loadAnns(ann_ids)[0]['keypoints']
+                    vis_img = draw_pose_on_image(orig_img.copy(), gt_kps, color=(0, 255, 0))
+                    vis_img = draw_pose_on_image(vis_img, keypoints_flat, color=(255, 0, 0))
+                    viz_images.append(wandb.Image(vis_img, caption=f"ID[{img_id}]"))
+
+            except Exception as e:
+                print(f"[{i}] ❌ Exception during evaluation: {e}")
+                continue
+
+    print(f"\n✅ Total predictions generated: {len(results)}")
     if not results:
-        print("No valid predictions generated.")
+        print("❌ No valid predictions. Evaluation skipped.")
         return 0.0, 0.0, []
 
+    # COCO Eval
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, 'keypoints')
     coco_eval.evaluate()
