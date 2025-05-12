@@ -64,6 +64,9 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16, conf_thresho
             print("==> sample keypoint:", coords[0, 0])
             print("==> bbox:", bbox)
             print("==> keypoints_flat:", keypoints_flat[:6])
+            gt_ann = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=img_id, catIds=[1]))
+            print(f"GT keypoints: {gt_ann[0]['keypoints'][:6]}")
+            break
 
             results.append(result)
 
