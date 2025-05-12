@@ -27,6 +27,8 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
             kps = keypoints[0].cpu().numpy()  # [K,2]
 
             # Reverse affine mapping to original image coordinates
+            print(bbox)
+
             x0, y0, w, h = bbox
             sx = input_w / w
             sy = input_h / h

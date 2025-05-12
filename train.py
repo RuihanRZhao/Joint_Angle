@@ -34,7 +34,11 @@ def coord_weight_scheduler(epoch, ramp_epochs=10):
 
 if __name__ == "__main__":
     config = get_config()
-    wandb.init(project="JointPose_SimCC", config=config)
+    wandb.init(
+        project="JointPose_SimCC",
+        config=config,
+        mode=config['wandb'],
+    )
 
 
 
