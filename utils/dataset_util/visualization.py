@@ -42,4 +42,6 @@ def draw_pose_on_image(img, keypoints_list, color=(255, 0, 0)):
             pt2 = (int(kp[j, 0]), int(kp[j, 1]))
             cv2.line(img_draw, pt1, pt2, color, 2)
 
+    img_draw = cv2.cvtColor(img_draw, cv2.COLOR_BGR2RGB)
+
     return img_draw
