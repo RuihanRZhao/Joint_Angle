@@ -41,6 +41,7 @@ class COCOPoseDataset(Dataset):
         self.transform = transform
         self.bins = bins
         self.downsample = downsample
+        self.min_keypoints = 10
 
         # 输出分类维度
         self.out_w = self.input_w // self.downsample
@@ -51,22 +52,25 @@ class COCOPoseDataset(Dataset):
         # 加载标注
         ann_ids = self.coco.getAnnIds(catIds=[1])
         anns = [self.coco.loadAnns(i)[0] for i in ann_ids]
+
         # 过滤无关键点样本
-        self.annotations = [
-            a for a in anns
-            if a.get('num_keypoints', 0) > 0
-            and np.any(np.array(a['keypoints'], dtype=np.float32).reshape(-1,3)[:,2] > 0)
-        ]
-        self.annotations.sort(key=lambda x: x['image_id'])
+        valid_annotations = []
+        for a in anns:
+            kps = np.array(a.get('keypoints', []), dtype=np.float32).reshape(-1, 3)
+            visible_count = int((kps[:, 2] > 0).sum())
+            if visible_count >= self.min_keypoints:
+                valid_annotations.append(a)
+
+        self.annotations = sorted(valid_annotations, key=lambda x: x['image_id'])
         if max_samples:
             self.annotations = self.annotations[:max_samples]
 
         # 默认变换
         if self.transform is None:
             self.transform = transforms.Compose([
-                transforms.ToTensor(),                                  # [0,255] -> [0,1]
-                transforms.Normalize(mean=[0.485,0.456,0.406],
-                                     std=[0.229,0.224,0.225])
+                transforms.ToTensor(),  # [0,255] -> [0,1]
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
             ])
 
     def __len__(self):
