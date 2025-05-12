@@ -35,7 +35,7 @@ batch_size_val: 1
 pin_memory: !!bool True
 prefetch_factor: 4
 
-wandb: offline
+wandb: online
 
 
 
