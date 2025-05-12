@@ -15,8 +15,8 @@ input_h: !!int 384
 input_w: !!int 384
 
 epochs: 200
-batch_size: 64 # 256
-learning_rate: !!float 2.5e-4 # 1e-3
+batch_size: 256
+learning_rate: !!float 1e-3
 
 # optimizer and scheduler
 div_factor: !!float 25.0
@@ -24,8 +24,8 @@ warmup_pct: !!float 0.1
 
 weight_warm_pct: 10
 
-max_samples_train: 256 # None
-max_samples_val: 16 # None
+max_samples_train: None
+max_samples_val: None
 
 n_viz: 3
 
