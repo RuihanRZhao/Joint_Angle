@@ -8,21 +8,17 @@ from .dataset_util import draw_pose_on_image
 from PIL import Image
 import random
 
-
 def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
     model.eval()
     results = []
     viz_images = []
-
-    input_w, input_h = input_size
-    all_indices = list(range(len(val_loader)))
-    viz_indices = set(random.sample(all_indices, min(n_viz, len(all_indices))))
     coco_gt = val_loader.dataset.coco
 
+    input_w, input_h = input_size
+    total = len(val_loader.dataset)
+    viz_idxs = set(random.sample(range(total), min(n_viz, total)))
     with torch.no_grad():
-        for i, (img_tensor, meta) in tqdm(enumerate(val_loader), total=len(val_loader)):
-            img_tensor = img_tensor.to(device)
-            image_id = meta['image_id'].item()
+        for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
             bbox = meta['bbox'].squeeze(0).tolist()
             pred_x, pred_y, _ = model(img_tensor)
 
@@ -52,13 +48,14 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
             }
             results.append(result)
 
-            if i in viz_indices:
-                file_name = val_loader.dataset.coco.loadImgs(image_id)[0]['file_name']
-                img_path = os.path.join(val_loader.dataset.img_dir, file_name)
-                orig_img = Image.open(img_path).convert('RGB')
-                vis_img = draw_pose_on_image(orig_img, keypoints_flat)
-                viz_images.append(wandb.Image(vis_img, caption=f"ID: {image_id}"))
+            # 可视化图像
+            if i in viz_idxs:
+                orig_img = Image.open(os.path.join(val_loader.dataset.img_dir, val_loader.dataset.coco.loadImgs(img_id)[0]['file_name'])).convert('RGB')
+                vis_img = draw_pose_on_image(orig_img.copy(), coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=img_id, catIds=[1]))[0]['keypoints'],(0, 255, 0))
+                vis_img = draw_pose_on_image(vis_img, keypoints_flat, (0,0,255))
+                viz_images.append(wandb.Image(vis_img, caption=f"ID[{img_id}]"))
 
+    # 调用 COCOeval
     coco_dt = coco_gt.loadRes(results)
     coco_eval = COCOeval(coco_gt, coco_dt, 'keypoints')
     coco_eval.evaluate()
