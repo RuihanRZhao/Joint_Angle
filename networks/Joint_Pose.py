@@ -46,28 +46,14 @@ class JointPoseNet(nn.Module):
             GhostBottleneck(inp=32, mid_channels=32 * 2, oup=32, stride=1, use_se=False),
         ])
         # Upsampling layers for low-res features (Dense Upsampling Convolution via PixelShuffle)
-        self.upsample1 = nn.Sequential(
-            nn.Conv2d(backbone_out_channels, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.PixelShuffle(upscale_factor=2)  # 1/16 -> 1/8, output 256/4 = 64 channels
-        )
-        self.upsample2 = nn.Sequential(
-            nn.Conv2d(64, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.PixelShuffle(upscale_factor=2)  # 1/8 -> 1/4, output 256/4 = 64 channels
-        )
-        # Heatmap prediction conv for stage 1
-        self.heatmap_conv1 = nn.Conv2d(64, num_joints, kernel_size=1, bias=True)
-        # Refinement head for stage 2: combine high-res features and stage1 heatmaps
-        refine_in_channels = 32 + num_joints
-        self.refine_conv1 = nn.Sequential(
-            nn.Conv2d(refine_in_channels, 64, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
-        self.heatmap_conv2 = nn.Conv2d(64, num_joints, kernel_size=3, padding=1, bias=True)
+        self.upsample1 = nn.Upsample(scale_factor=2)   # upsample 1/16 -> 1/8
+        self.upsample2 = nn.Upsample(scale_factor=2)   # upsample 1/8 -> 1/4
+        # Convolution layers for heatmap prediction
+        self.heatmap_conv1 = nn.Conv2d(64, num_joints, kernel_size=1)
+        self.refine_conv1 = nn.Conv2d(64 + num_joints, 64, kernel_size=3, padding=1)
+        self.heatmap_conv2 = nn.Conv2d(64, num_joints, kernel_size=1)
+
+
     def forward(self, x):
         features = x
         highres_input = None
@@ -77,26 +63,30 @@ class JointPoseNet(nn.Module):
             # Capture feature after stage2 (index 3 in backbone list) for high-res branch input
             if idx == 3:
                 highres_input = features
-        # High-resolution branch forward
+
+        # Low-res feature head (e.g., stage4 output)
+        lr_feat = features  # final backbone output
+        # High-res feature (upsampled stage2 output)
         hr_feat = highres_input
-        for layer in self.highres_branch:
-            hr_feat = layer(hr_feat)
+
         # Upsample low-res features to 1/4 resolution
-        up_feat1 = self.upsample1(features)   # 1/8, 64 channels
-        up_feat2 = self.upsample2(up_feat1)   # 1/4, 64 channels
+        up_feat1 = self.upsample1(features)  # 1/8, 64 channels
+        up_feat2 = self.upsample2(up_feat1)  # 1/4, 64 channels
         # Stage 1 heatmaps
-        heatmap_init = torch.sigmoid(self.heatmap_conv1(up_feat2))
+        heatmap_init = torch.sigmoid(self.heatmap_conv1(up_feat2))  # Sigmoid归一化热图到[0,1]范围 📎
         # 第2阶段细化：将高分辨率特征与第一阶段热图拼接
         combined = torch.cat([hr_feat, heatmap_init], dim=1)
         refine_feat = self.refine_conv1(combined)
-        heatmap_refine = torch.sigmoid(self.heatmap_conv2(refine_feat))
+        heatmap_refine = torch.sigmoid(self.heatmap_conv2(refine_feat))  # Sigmoid归一化热图到[0,1]范围 📎
         # DSNT for keypoints （修改后代码）
         B, J, H, W = heatmap_refine.shape
         # 展平热图并计算 softmax 概率分布
         heatmap_flat = heatmap_refine.view(B, J, -1)
         prob = F.softmax(heatmap_flat, dim=2)
         # 创建归一化坐标网格 [-1, 1]
-        grid_y = torch.linspace(-1.0, 1.0, steps=H, dtype=prob.dtype, device=prob.device).unsqueeze(1).repeat(1,W).contiguous().view(-1)
+        grid_y = torch.linspace(-1.0, 1.0, steps=H, dtype=prob.dtype, device=prob.device).unsqueeze(1).repeat(1,
+                                                                                                              W).contiguous().view(
+            -1)
         grid_x = torch.linspace(-1.0, 1.0, steps=W, dtype=prob.dtype, device=prob.device).repeat(H).contiguous()
 
         # 计算期望坐标
@@ -104,5 +94,5 @@ class JointPoseNet(nn.Module):
         grid_y = grid_y.unsqueeze(0).unsqueeze(0)
         x_coords = torch.sum(prob * grid_x, dim=2)  # x坐标归一化值
         y_coords = torch.sum(prob * grid_y, dim=2)  # y坐标归一化值
-        keypoints = torch.stack([x_coords, y_coords], dim=2)
+        keypoints = torch.stack([x_coords, y_coords], dim=2)  # 拼接归一化坐标 ([-1,1]范围) 📎
         return heatmap_init, heatmap_refine, keypoints

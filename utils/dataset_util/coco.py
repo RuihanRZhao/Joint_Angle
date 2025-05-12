@@ -16,9 +16,7 @@ from .encoder_decoder import keypoints_to_heatmaps
 
 class COCOPoseDataset(Dataset):
     """Custom Dataset for COCO keypoint data (single-person)."""
-
     def __init__(self,
-                 root,
                  ann_file,
                  img_dir,
                  input_size=(384, 216),
@@ -29,35 +27,29 @@ class COCOPoseDataset(Dataset):
         """
         ann_file: path to COCO keypoints annotation JSON (e.g., person_keypoints_train2017.json)
         img_dir: directory containing the images (e.g., train2017 folder)
-        max_samples: 如果指定，则只保留前 N 条 annotation，用于快速调试或小规模训练
+        input_size: (input_h, input_w), size to which images are cropped and resized.
+        transform: optional torchvision transforms to apply to the image.
+        return_meta: if True, __getitem__ returns (image_tensor, meta) instead of training targets.
+        max_samples: if provided, limit the dataset to the first max_samples annotations.
         """
-        ann_path = os.path.join(root, ann_file)
-        if not os.path.isfile(ann_path):
-            raise RuntimeError(f"找不到注解文件：{ann_path}")
-        self.coco = COCO(ann_path)
-
-        self.img_dir = os.path.join(root, img_dir)
-        if not os.path.isdir(self.img_dir):
-            raise RuntimeError(f"找不到图像目录：{self.img_dir}")
-
-        self.input_size = tuple(input_size)
+        self.coco = COCO(ann_file)
+        self.img_dir = img_dir
+        self.input_size = input_size  # (input_w, input_h) or (input_h, input_w) based on usage
         self.transform = transform
+        self.return_meta = return_meta
 
-        # Gather all person annotations with keypoints
+        # Load all person annotations
         self.annotations = []
-        ann_ids = self.coco.getAnnIds(catIds=[1])  # category 1 is person in COCO
-        for ann in self.coco.loadAnns(ann_ids):
-            if ann.get('num_keypoints', 0) > 0:
+        ann_ids = self.coco.getAnnIds(catIds=[1])  # category 1 is person
+        for ann_id in ann_ids:
+            ann = self.coco.loadAnns(ann_id)[0]
+            # Filter out annotations with no keypoints (num_keypoints == 0)
+            if ann.get('num_keypoints', 0) > 0 and np.any(np.array(ann['keypoints'], dtype=np.float32) > 0):
                 self.annotations.append(ann)
         # Sort annotations by image_id for consistency
-        self.annotations.sort(key=lambda a: a['image_id'])
-
-        # 如果指定了 max_samples，则截断列表
-        if max_samples is not None and isinstance(max_samples, int):
+        self.annotations.sort(key=lambda x: x['image_id'])
+        if max_samples is not None:
             self.annotations = self.annotations[:max_samples]
-
-        # Flag to determine return type (for training vs evaluation)
-        self.return_meta = return_meta
 
     def __getitem__(self, idx):
         # Load annotation and corresponding image
@@ -70,11 +62,10 @@ class COCOPoseDataset(Dataset):
         keypoints = np.array(ann['keypoints'], dtype=np.float32).reshape(-1, 3)
         bbox = ann.get('bbox', None)  # [x, y, w, h]
         if bbox is None:
-            # If no bbox provided, compute from keypoints as min/max (not typical for COCO, since bbox is provided)
+            # If no bbox provided, compute from keypoints as min/max (not typical for COCO)
             visible_pts = keypoints[keypoints[:, 2] > 0]
             if visible_pts.size == 0:
-                # No visible keypoints, return zeros (this case shouldn't happen given num_keypoints > 0)
-                visible_pts = keypoints[:, :2]
+                visible_pts = keypoints[:, :2]  # no visible keypoints, take all (could be zeroes)
             x_min, y_min = visible_pts[:, 0].min(), visible_pts[:, 1].min()
             x_max, y_max = visible_pts[:, 0].max(), visible_pts[:, 1].max()
             bbox = [float(x_min), float(y_min), float(x_max - x_min), float(y_max - y_min)]
@@ -102,6 +93,7 @@ class COCOPoseDataset(Dataset):
         target_ratio = input_w / input_h
         orig_ratio = orig_w / orig_h if orig_h != 0 else target_ratio
         if abs(orig_ratio - target_ratio) < 1e-6:
+            # If aspect ratio is essentially the same, just resize directly
             img_resized = img_crop.resize((input_w, input_h), Image.BILINEAR)
             pad_left = pad_top = pad_right = pad_bottom = 0
         else:
@@ -112,7 +104,7 @@ class COCOPoseDataset(Dataset):
             img_scaled = img_crop.resize((new_w, new_h), Image.BILINEAR)
             # Create new image with black background
             img_resized = Image.new('RGB', (input_w, input_h))
-            # paste scaled image at top-left (could center, but top-left for simplicity)
+            # paste scaled image at top-left corner (not centered)
             img_resized.paste(img_scaled, (0, 0))
             pad_left = pad_top = 0
             pad_right = input_w - new_w
@@ -137,9 +129,15 @@ class COCOPoseDataset(Dataset):
         # Adjust keypoints coordinates to cropped & resized image space
         keypoints[:, 0] -= x
         keypoints[:, 1] -= y
-        scale_x = input_w / (w if w != 0 else 1)
-        scale_y = input_h / (h if h != 0 else 1)
-
+        # 确定关键点缩放比例（根据是否保持纵横比） 📎
+        if pad_right != 0 or pad_bottom != 0:
+            # 保持纵横比的缩放，使用实际缩放尺寸计算scale 📎
+            scale_x = (input_w - pad_right) / (w if w != 0 else 1)
+            scale_y = (input_h - pad_bottom) / (h if h != 0 else 1)
+        else:
+            # 未使用padding（长宽比与目标一致），按直接缩放计算scale 📎
+            scale_x = input_w / (w if w != 0 else 1)
+            scale_y = input_h / (h if h != 0 else 1)
         keypoints[:, 0] *= scale_x
         keypoints[:, 1] *= scale_y
 
@@ -148,22 +146,22 @@ class COCOPoseDataset(Dataset):
 
         keypoints_pixel = keypoints.copy()
 
-        keypoints[:, 0] = keypoints[:, 0] / (input_w - 1) * 2 - 1
+        keypoints[:, 0] = keypoints[:, 0] / (input_w - 1) * 2 - 1   # 归一化到[-1,1]
         keypoints[:, 1] = keypoints[:, 1] / (input_h - 1) * 2 - 1
 
-        # 生成目标热图和mask（热图大小为输入的1/4）
-        out_w = int(input_w // 4)
-        out_h = int(input_h // 4)
-        target_heatmaps = keypoints_to_heatmaps(keypoints_pixel, input_size=(input_h, input_w), output_size=(out_h, out_w), sigma=2)
-        # mask 和 tensor 构建
+        # 生成目标热图和 mask（热图大小为输入的 1/4）
+        out_w = input_w // 4
+        out_h = input_h // 4
+        target_heatmaps = keypoints_to_heatmaps(keypoints_pixel, input_size=(input_h, input_w),
+                                                output_size=(out_h, out_w), sigma=2)
+        # mask: 1 for visible joints, 0 for invisible
         mask = np.where(keypoints[:, 2] > 0, 1.0, 0.0).astype(np.float32)
 
         target_heatmaps_tensor = torch.from_numpy(target_heatmaps).to(dtype=torch.float32)
-        mask_tensor = torch.from_numpy(mask)
-
         keypoints_tensor = torch.from_numpy(keypoints[:, :2]).to(dtype=torch.float32)
-
+        mask_tensor = torch.from_numpy(mask).to(dtype=torch.float32)
         return img_tensor, target_heatmaps_tensor, keypoints_tensor, mask_tensor
+
 
     def __len__(self):
         return len(self.annotations)
