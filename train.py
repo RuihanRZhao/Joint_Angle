@@ -2,7 +2,8 @@ import os
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, SequentialLR, LinearLR
+
 
 import wandb
 
@@ -56,10 +57,31 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = JointPoseNet(num_joints=17, input_size=input_size, bins=config['bins']).to(device)
     criterion = SimCCLoss()
-    optimizer = AdamW(model.parameters(), lr=config['learning_rate']/config['div_factor'], weight_decay=1e-4)
-    scheduler = OneCycleLR(optimizer, max_lr=config['learning_rate'], epochs=config['epochs'],
-                           steps_per_epoch=len(train_loader), pct_start=config['warmup_pct'],
-                           div_factor=config['div_factor'], final_div_factor=10000.0)
+    optimizer = AdamW(model.parameters(), lr=config['learning_rate'], weight_decay=1e-4)
+
+    warmup_epochs = int(config['epochs'] * config['warmup_pct'])
+
+    # 创建线性热身调度器：从较低因子逐步增加至 1
+    scheduler_warmup = LinearLR(
+        optimizer,
+        start_factor=1.0 / config['div_factor'],  # 初始因子，例如1/25=0.04，对应初始LR约4e-5
+        end_factor=1.0,  # 最终因子1.0，对应目标LR 1e-3
+        total_iters=warmup_epochs  # 热身持续的epoch数（例如20个epoch）
+    )
+
+    # 创建余弦退火重启调度器：定义T_0周期等参数
+    scheduler_cosine = CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=60,  # 初始周期长度（例如60个epoch）
+        T_mult=1,  # 后续周期长度倍率（=1表示每个周期长度相同）
+        eta_min=1e-6  # 学习率最小值（余弦波谷值）
+    )
+
+    scheduler = SequentialLR(
+        optimizer,
+        schedulers=[scheduler_warmup, scheduler_cosine],
+        milestones=[warmup_epochs]  # 在第 warmup_epochs 个 step 时切换
+    )
 
     print(f"============ CONFIG ============")
     for key, data in config.items():
@@ -81,11 +103,13 @@ if __name__ == "__main__":
 
     for epoch in range(start_epoch, config['epochs']):
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
-        metrics = train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device, epoch)
+        metrics = train_one_epoch(model, train_loader, criterion, optimizer, scheduler=None, device=device, epoch=epoch)
 
         mAP, AP50, vis_images = evaluate(model, val_loader, device, input_size, config['bins'], n_viz=config['n_viz'])
 
         print(f"Ep {epoch+1}: Total Loss: {metrics['total_loss']:.8f} | X: {metrics['x_loss']:.8f} | Y: {metrics['y_loss']:.8f} | mAP: {mAP:.12f} | AP50: {AP50:.12f}")
+
+        scheduler.step()
 
         # Save best
         if AP50 > best_ap:
