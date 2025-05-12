@@ -98,10 +98,17 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
                     viz_images.append(wandb.Image(vis, caption=f"ID:{image_id}"))
 
     # COCOeval
-    coco_dt = coco_gt.loadRes(results) if results else coco_gt
     coco_eval = COCOeval(coco_gt, coco_dt, 'keypoints')
-    coco_eval.params.useSegm = False
-    coco_eval.params.maxDets = [20, 50, 100]
+
+    # —— 强制覆盖 ——
+    coco_eval.params.iouType = 'keypoints'  # 一定要是 'keypoints'
+    coco_eval.params.maxDets = [20, 50, 100]  # keypoints 默认的 maxDets
+    if hasattr(coco_eval.params, 'useSegm'):
+        coco_eval.params.useSegm = None  # 清掉这个参数，避免触发 bbox 或 segm 分支
+    print(
+        f"[DEBUG] iouType={coco_eval.params.iouType}, maxDets={coco_eval.params.maxDets}, useSegm={coco_eval.params.useSegm}")
+    # —— 覆盖结束 ——
+
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize()
