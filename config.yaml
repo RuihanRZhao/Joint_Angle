@@ -2,8 +2,8 @@ run_root: 'run'
 data_root: 'run/single_person'
 checkpoint_root: 'run/checkpoints'
 
-data_root_val: run/data/
-ann_file_val: annotations/person_keypoints_val2017.json
+data_root_val: 'run/data/'
+ann_file_val: 'annotations/person_keypoints_val2017.json'
 
 # dataset build
 person_margin_ratio: !!float 0.1
