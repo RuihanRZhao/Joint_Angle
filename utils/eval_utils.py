@@ -9,7 +9,7 @@ from PIL import Image
 import random
 
 
-def evaluate(model, val_loader, device, input_size, bins, coco_gt, n_viz=16):
+def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
     model.eval()
     results = []
     viz_images = []
