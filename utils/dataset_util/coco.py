@@ -17,6 +17,7 @@ from .encoder_decoder import keypoints_to_heatmaps
 class COCOPoseDataset(Dataset):
     """Custom Dataset for COCO keypoint data (single-person)."""
     def __init__(self,
+                 root,
                  ann_file,
                  img_dir,
                  input_size=(384, 216),
@@ -32,8 +33,8 @@ class COCOPoseDataset(Dataset):
         return_meta: if True, __getitem__ returns (image_tensor, meta) instead of training targets.
         max_samples: if provided, limit the dataset to the first max_samples annotations.
         """
-        self.coco = COCO(ann_file)
-        self.img_dir = img_dir
+        self.coco = COCO(os.path.join(root, ann_file))
+        self.img_dir = os.path.join(root, img_dir)
         self.input_size = input_size  # (input_w, input_h) or (input_h, input_w) based on usage
         self.transform = transform
         self.return_meta = return_meta
