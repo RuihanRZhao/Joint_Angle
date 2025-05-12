@@ -28,6 +28,8 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16, conf_thresho
             img_tensor = img_tensor.to(device)
             pred_x, pred_y = model(img_tensor)
 
+            print(pred_x.shape, pred_y.shape)
+
             coords, conf = decode_simcc(pred_x, pred_y, input_size, bins, return_score=True)
             kps = coords[0].cpu().numpy()  # [K, 2]
             scores = conf[0].cpu().numpy()  # [K]
