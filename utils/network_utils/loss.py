@@ -1,71 +1,47 @@
 import torch
 import torch.nn as nn
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-class HeatmapMSELoss(nn.Module):
-    def __init__(self):
-        super(HeatmapMSELoss, self).__init__()
+class SimCCLoss(nn.Module):
+    def __init__(self, x_weight=1.0, y_weight=1.0):
+        super(SimCCLoss, self).__init__()
+        self.x_weight = x_weight
+        self.y_weight = y_weight
+        self.ce_x = nn.CrossEntropyLoss(reduction='none')
+        self.ce_y = nn.CrossEntropyLoss(reduction='none')
 
-    def forward(self, preds, targets, mask=None):
-        if isinstance(preds, (tuple, list)):
-            loss = 0.0
-            for p in preds:
-                loss += self._compute_loss(p, targets, mask)
-            loss = loss / len(preds)
-        else:
-            loss = self._compute_loss(preds, targets, mask)
-        return loss
+    def forward(self, pred_x, pred_y, target_x, target_y, mask):
+        """
+        pred_x: [B, K, Cx] (logits)
+        pred_y: [B, K, Cy] (logits)
+        target_x: [B, K] (long indices)
+        target_y: [B, K] (long indices)
+        mask: [B, K] (float, 0 or 1)
+        """
+        B, K = target_x.shape
+        pred_x = pred_x.view(B * K, -1)
+        pred_y = pred_y.view(B * K, -1)
+        target_x = target_x.view(-1)
+        target_y = target_y.view(-1)
+        mask = mask.view(-1)
 
-    def _compute_loss(self, pred, target, mask):
-        diff = pred - target
-        if mask is not None:
-            mask_expanded = mask[:, :, None, None].to(diff.device)
-            diff = diff * mask_expanded
-            num_present = mask_expanded.sum()
-            if num_present.item() == 0:
-                return torch.tensor(0.0, device=diff.device)
-            loss = (diff ** 2).sum() / (num_present * pred.shape[-1] * pred.shape[-2])
-        else:
-            loss = (diff ** 2).mean()
-        return loss
+        # compute individual losses
+        loss_x = self.ce_x(pred_x, target_x)  # [B*K]
+        loss_y = self.ce_y(pred_y, target_y)  # [B*K]
 
-class PoseEstimationLoss(nn.Module):
-    def __init__(self, coord_loss_weight=1.0):
-        super(PoseEstimationLoss, self).__init__()
-        self.heatmap_loss = HeatmapMSELoss()
-        self.coord_weight = coord_loss_weight
-        self.coord_loss_fn = nn.SmoothL1Loss(reduction='none')  # 改为逐点损失，便于应用mask
+        # apply mask
+        loss_x = loss_x * mask
+        loss_y = loss_y * mask
 
-    def forward(self,
-                heatmaps_preds,      # (heatmap_init, heatmap_refine)
-                heatmaps_targets,    # [B, J, H, W]
-                keypoints_preds,     # [B, J, 2], 归一化坐标
-                keypoints_targets,   # [B, J, 2], 归一化坐标
-                mask=None,           # [B, J]
-                coord_weight=None):  # float 可选：当前 epoch 动态权重
+        valid = mask.sum().clamp(min=1.0)
+        mean_x = loss_x.sum() / valid
+        mean_y = loss_y.sum() / valid
 
-        # 热图损失
-        hm_loss = self.heatmap_loss(heatmaps_preds, heatmaps_targets, mask)
-
-        # 坐标损失
-        coord_loss = self.coord_loss_fn(keypoints_preds, keypoints_targets)  # [B, J, 2]
-
-        if mask is not None:
-            mask_exp = mask.unsqueeze(-1).to(coord_loss.device)  # [B, J, 1]
-            coord_loss = coord_loss * mask_exp  # 屏蔽不可见关键点
-            num_present = mask.sum()
-            if num_present.item() == 0:
-                coord_loss = torch.tensor(0.0, device=coord_loss.device)
-            else:
-                coord_loss = coord_loss.sum() / (num_present * 2)  # 平均每个点x,y
-        else:
-            coord_loss = coord_loss.mean()
-
-        # 坐标损失权重（支持warmup）
-        gamma = coord_weight if coord_weight is not None else 1.0
-        total_loss = hm_loss + gamma * self.coord_weight * coord_loss
-
-        return total_loss, {
-            'loss_heatmap': hm_loss.item(),
-            'loss_coord': coord_loss.item() if isinstance(coord_loss, torch.Tensor) else coord_loss,
-            'coord_weight': gamma * self.coord_weight
+        total = self.x_weight * mean_x + self.y_weight * mean_y
+        return {
+            'total_loss': total,
+            'x_loss': mean_x,
+            'y_loss': mean_y
         }

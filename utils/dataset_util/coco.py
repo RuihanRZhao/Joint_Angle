@@ -12,10 +12,17 @@ from torchvision import transforms
 
 from pycocotools.coco import COCO
 
-from .encoder_decoder import keypoints_to_heatmaps
-
 class COCOPoseDataset(Dataset):
-    """Custom Dataset for COCO keypoint data (single-person)."""
+    """
+    COCO 单人关键点数据集（SimCC 坐标分类版本）
+    输出:
+      - image_tensor:      [3, H, W], float32
+      - target_x:          [K, out_W * bins], float32, one-hot
+      - target_y:          [K, out_H * bins], float32, one-hot
+      - mask:              [K], float32, 1 表示该关节有效 (v>0)，0 表示无标注 (v==0)
+    或者若 return_meta=True:
+      - image_tensor, { 'image_id': id, 'bbox': [x,y,w,h] }
+    """
     def __init__(self,
                  root,
                  ann_file,
@@ -23,149 +30,145 @@ class COCOPoseDataset(Dataset):
                  input_size=(384, 216),
                  transform=None,
                  return_meta=False,
-                 max_samples=None  # 新增：最大样本数量上限
+                 max_samples=None,
+                 bins=4,                # 每像素细分子区数量
+                 downsample=4           # 下采样倍数，与模型解码一致
                  ):
-        """
-        ann_file: path to COCO keypoints annotation JSON (e.g., person_keypoints_train2017.json)
-        img_dir: directory containing the images (e.g., train2017 folder)
-        input_size: (input_h, input_w), size to which images are cropped and resized.
-        transform: optional torchvision transforms to apply to the image.
-        return_meta: if True, __getitem__ returns (image_tensor, meta) instead of training targets.
-        max_samples: if provided, limit the dataset to the first max_samples annotations.
-        """
         self.coco = COCO(os.path.join(root, ann_file))
         self.img_dir = os.path.join(root, img_dir)
-        self.input_size = input_size  # (input_w, input_h) or (input_h, input_w) based on usage
-        self.transform = transform
+        self.input_w, self.input_h = input_size[0], input_size[1]
         self.return_meta = return_meta
+        self.transform = transform
+        self.bins = bins
+        self.downsample = downsample
 
-        # Load all person annotations
-        self.annotations = []
-        ann_ids = self.coco.getAnnIds(catIds=[1])  # category 1 is person
-        for ann_id in ann_ids:
-            ann = self.coco.loadAnns(ann_id)[0]
-            # Filter out annotations with no keypoints (num_keypoints == 0)
-            if ann.get('num_keypoints', 0) > 0 and np.any(np.array(ann['keypoints'], dtype=np.float32) > 0):
-                self.annotations.append(ann)
-        # Sort annotations by image_id for consistency
+        # 输出分类维度
+        self.out_w = self.input_w // self.downsample
+        self.out_h = self.input_h // self.downsample
+        self.x_classes = self.out_w * self.bins
+        self.y_classes = self.out_h * self.bins
+
+        # 加载标注
+        ann_ids = self.coco.getAnnIds(catIds=[1])
+        anns = [self.coco.loadAnns(i)[0] for i in ann_ids]
+        # 过滤无关键点样本
+        self.annotations = [
+            a for a in anns
+            if a.get('num_keypoints', 0) > 0
+            and np.any(np.array(a['keypoints'], dtype=np.float32).reshape(-1,3)[:,2] > 0)
+        ]
         self.annotations.sort(key=lambda x: x['image_id'])
-        if max_samples is not None:
+        if max_samples:
             self.annotations = self.annotations[:max_samples]
 
-    def __getitem__(self, idx):
-        # Load annotation and corresponding image
-        ann = self.annotations[idx]
-        image_info = self.coco.loadImgs(ann['image_id'])[0]
-        img_path = os.path.join(self.img_dir, image_info['file_name'])
-        # Open image
-        img = Image.open(img_path).convert('RGB')
-        # Keypoints and bounding box from annotation
-        keypoints = np.array(ann['keypoints'], dtype=np.float32).reshape(-1, 3)
-        bbox = ann.get('bbox', None)  # [x, y, w, h]
-        if bbox is None:
-            # If no bbox provided, compute from keypoints as min/max (not typical for COCO)
-            visible_pts = keypoints[keypoints[:, 2] > 0]
-            if visible_pts.size == 0:
-                visible_pts = keypoints[:, :2]  # no visible keypoints, take all (could be zeroes)
-            x_min, y_min = visible_pts[:, 0].min(), visible_pts[:, 1].min()
-            x_max, y_max = visible_pts[:, 0].max(), visible_pts[:, 1].max()
-            bbox = [float(x_min), float(y_min), float(x_max - x_min), float(y_max - y_min)]
-        x, y, w, h = bbox
-        # Optionally expand the bounding box slightly for more context
-        pad = 0.15  # 15% padding
-        x_c, y_c = x + w / 2.0, y + h / 2.0
-        w = w * (1 + pad)
-        h = h * (1 + pad)
-        x = x_c - w / 2.0
-        y = y_c - h / 2.0
-        # Clamp the coordinates to be within image bounds
-        img_width, img_height = img.size
-        x = max(0, x)
-        y = max(0, y)
-        w = min(w, img_width - x)
-        h = min(h, img_height - y)
-        # Crop and resize the image to the input size
-        crop_box = (int(x), int(y), int(x + w), int(y + h))
-        img_crop = img.crop(crop_box)
-        input_w, input_h = self.input_size
-        # Preserve aspect ratio by padding if needed:
-        # Compute aspect ratios
-        orig_w, orig_h = img_crop.size
-        target_ratio = input_w / input_h
-        orig_ratio = orig_w / orig_h if orig_h != 0 else target_ratio
-        if abs(orig_ratio - target_ratio) < 1e-6:
-            # If aspect ratio is essentially the same, just resize directly
-            img_resized = img_crop.resize((input_w, input_h), Image.BILINEAR)
-            pad_left = pad_top = pad_right = pad_bottom = 0
-        else:
-            # Determine scale to fit within target while preserving aspect
-            scale = min(input_w / orig_w, input_h / orig_h)
-            new_w = int(orig_w * scale)
-            new_h = int(orig_h * scale)
-            img_scaled = img_crop.resize((new_w, new_h), Image.BILINEAR)
-            # Create new image with black background
-            img_resized = Image.new('RGB', (input_w, input_h))
-            # paste scaled image at top-left corner (not centered)
-            img_resized.paste(img_scaled, (0, 0))
-            pad_left = pad_top = 0
-            pad_right = input_w - new_w
-            pad_bottom = input_h - new_h
-        # Apply image transformations (to tensor and normalization)
-        if self.transform:
-            img_tensor = self.transform(img_resized)
-        else:
-            img_tensor = transforms.ToTensor()(img_resized)  # convert to [0,1] float tensor
-            img_tensor = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                              std=[0.229, 0.224, 0.225])(img_tensor)
-        # If return_meta, skip target generation and return metadata
-        if self.return_meta:
-            # Use the augmented (padded/clamped) bounding box as meta
-            meta_bbox = np.array([x, y, w, h], dtype=np.float32)
-            meta = {
-                'image_id': ann['image_id'],
-                'bbox': meta_bbox
-            }
-            return img_tensor, meta
-        # Otherwise, generate target heatmaps and mask
-        # Adjust keypoints coordinates to cropped & resized image space
-        keypoints[:, 0] -= x
-        keypoints[:, 1] -= y
-        # 确定关键点缩放比例（根据是否保持纵横比） 📎
-        if pad_right != 0 or pad_bottom != 0:
-            # 保持纵横比的缩放，使用实际缩放尺寸计算scale 📎
-            scale_x = (input_w - pad_right) / (w if w != 0 else 1)
-            scale_y = (input_h - pad_bottom) / (h if h != 0 else 1)
-        else:
-            # 未使用padding（长宽比与目标一致），按直接缩放计算scale 📎
-            scale_x = input_w / (w if w != 0 else 1)
-            scale_y = input_h / (h if h != 0 else 1)
-        keypoints[:, 0] *= scale_x
-        keypoints[:, 1] *= scale_y
-
-        keypoints[:, 0] += pad_left
-        keypoints[:, 1] += pad_top
-
-        keypoints_pixel = keypoints.copy()
-
-        keypoints[:, 0] = keypoints[:, 0] / (input_w - 1) * 2 - 1   # 归一化到[-1,1]
-        keypoints[:, 1] = keypoints[:, 1] / (input_h - 1) * 2 - 1
-
-        # 生成目标热图和 mask（热图大小为输入的 1/4）
-        out_w = input_w // 4
-        out_h = input_h // 4
-        target_heatmaps = keypoints_to_heatmaps(keypoints_pixel, input_size=(input_h, input_w),
-                                                output_size=(out_h, out_w), sigma=2)
-        # mask: 1 for visible joints, 0 for invisible
-        mask = np.where(keypoints[:, 2] > 0, 1.0, 0.0).astype(np.float32)
-
-        target_heatmaps_tensor = torch.from_numpy(target_heatmaps).to(dtype=torch.float32)
-        keypoints_tensor = torch.from_numpy(keypoints[:, :2]).to(dtype=torch.float32)
-        mask_tensor = torch.from_numpy(mask).to(dtype=torch.float32)
-        return img_tensor, target_heatmaps_tensor, keypoints_tensor, mask_tensor
-
+        # 默认变换
+        if self.transform is None:
+            self.transform = transforms.Compose([
+                transforms.ToTensor(),                                  # [0,255] -> [0,1]
+                transforms.Normalize(mean=[0.485,0.456,0.406],
+                                     std=[0.229,0.224,0.225])
+            ])
 
     def __len__(self):
         return len(self.annotations)
+
+    def __getitem__(self, idx):
+        ann = self.annotations[idx]
+        img_info = self.coco.loadImgs(ann['image_id'])[0]
+        img_path = os.path.join(self.img_dir, img_info['file_name'])
+        img = Image.open(img_path).convert('RGB')
+
+        # 原始关键点 & bbox
+        kps = np.array(ann['keypoints'], dtype=np.float32).reshape(-1,3)  # [K,3]
+        bbox = ann.get('bbox', None)
+        if bbox is None:
+            visible = kps[:,2]>0
+            pts = kps[visible,:2] if visible.any() else kps[:,:2]
+            x0,y0 = pts[:,0].min(), pts[:,1].min()
+            x1,y1 = pts[:,0].max(), pts[:,1].max()
+            bbox = [x0, y0, x1-x0, y1-y0]
+        x, y, w, h = bbox
+
+        # 扩展 bbox 15%
+        pad = 0.15
+        xc, yc = x + w/2, y + h/2
+        w *= (1+pad); h *= (1+pad)
+        x = max(0, xc - w/2); y = max(0, yc - h/2)
+        w = min(w, img.width - x); h = min(h, img.height - y)
+
+        # 裁剪 & 缩放（保持比例 + 左上填充）
+        crop = img.crop((int(x),int(y),int(x+w),int(y+h)))
+        orig_w, orig_h = crop.size
+        target_ratio = self.input_w / self.input_h
+        orig_ratio   = orig_w / orig_h if orig_h>0 else target_ratio
+
+        if abs(orig_ratio - target_ratio) < 1e-6:
+            resized = crop.resize((self.input_w, self.input_h), Image.BILINEAR)
+            pad_left = pad_top = pad_right = pad_bottom = 0
+        else:
+            scale = min(self.input_w/orig_w, self.input_h/orig_h)
+            nw, nh = int(orig_w*scale), int(orig_h*scale)
+            scaled = crop.resize((nw, nh), Image.BILINEAR)
+            resized = Image.new('RGB', (self.input_w, self.input_h))
+            resized.paste(scaled, (0,0))
+            pad_left = pad_top = 0
+            pad_right = self.input_w - nw
+            pad_bottom= self.input_h - nh
+
+        # 图像变换
+        img_tensor = self.transform(resized)
+
+        # 元信息模式
+        if self.return_meta:
+            meta = {'image_id': ann['image_id'],
+                    'bbox': np.array([x,y,w,h], dtype=np.float32)}
+            return img_tensor, meta
+
+        # 调整关键点到裁剪后尺寸
+        kps_px = kps.copy()
+        kps_px[:,0] -= x; kps_px[:,1] -= y
+        # 计算缩放比例
+        if pad_right or pad_bottom:
+            sx = (self.input_w - pad_right) / (w if w>0 else 1)
+            sy = (self.input_h - pad_bottom)/ (h if h>0 else 1)
+        else:
+            sx = self.input_w / (w if w>0 else 1)
+            sy = self.input_h / (h if h>0 else 1)
+        kps_px[:,0] = kps_px[:,0]*sx + pad_left
+        kps_px[:,1] = kps_px[:,1]*sy + pad_top
+
+        # SimCC 目标张量
+        K = kps_px.shape[0]
+        target_x = np.zeros((K, self.x_classes), dtype=np.float32)
+        target_y = np.zeros((K, self.y_classes), dtype=np.float32)
+        mask     = np.zeros((K,), dtype=np.float32)
+
+        for j in range(K):
+            vx = kps_px[j,0]
+            vy = kps_px[j,1]
+            v  = kps_px[j,2]
+            # 只监督 v>0 的点 (COCO v=0 无标注)
+            if v > 0:
+                mask[j] = 1.0
+                # 归一化到 [0, out_w), [0, out_h)
+                x_s = np.clip(vx / self.downsample, 0, self.out_w - 1e-3)
+                y_s = np.clip(vy / self.downsample, 0, self.out_h - 1e-3)
+                # 分类索引
+                ix = int(np.floor(x_s * self.bins))
+                iy = int(np.floor(y_s * self.bins))
+                cls_x = j * 0  # placeholder, j used in axis, so:
+                idx_x = int(np.clip(x_s * self.bins, 0, self.x_classes - 1))
+                idx_y = int(np.clip(y_s * self.bins, 0, self.y_classes - 1))
+                target_x[j, idx_x] = 1.0
+                target_y[j, idx_y] = 1.0
+
+        # 转为 Tensor
+        target_x = torch.from_numpy(target_x)  # [K, x_classes]
+        target_y = torch.from_numpy(target_y)  # [K, y_classes]
+        mask     = torch.from_numpy(mask)      # [K]
+
+        return img_tensor, target_x, target_y, mask
+
 
 
 def ensure_coco_data(root, retries: int = 3, backoff_factor: float = 2.0):
