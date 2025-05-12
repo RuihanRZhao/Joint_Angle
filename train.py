@@ -33,7 +33,7 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None):
 
 
 def coord_weight_scheduler(epoch: int,
-                           ramp_epochs: int = 30) -> float:
+                           ramp_epochs: int = 10) -> float:
     """
     epoch: 当前 epoch（从 0 开始计数）
     ramp_epochs: 预计达到 weight=1 的 epoch 数（例如 60）
@@ -120,7 +120,7 @@ def main():
     # Training loop
     for epoch in range(start_epoch, config['epochs']):
         print(f"\nEpoch {epoch + 1}/{config['epochs']}")
-        coord_weight = coord_weight_scheduler(epoch+1)
+        coord_weight = coord_weight_scheduler(epoch, config['weight_warm_pct'])
 
         total_loss, loss_detail = train_one_epoch(epoch, model, train_loader, criterion, optimizer, scheduler, coord_weight, device)
 

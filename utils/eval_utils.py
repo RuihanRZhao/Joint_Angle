@@ -121,3 +121,5 @@ def evaluate(model, val_loader, ann_file, val_image_dir, input_w, input_h, n_viz
     if was_train:
         model.train()
     return mAP, AP50, viz_images
+
+
