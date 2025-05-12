@@ -1,6 +1,7 @@
 import os
 import torch
 from tqdm import tqdm
+import numpy as np
 from pycocotools.cocoeval import COCOeval
 from .network_utils.decoder import decode_simcc
 from .dataset_util.visualization import draw_pose_on_image
@@ -22,7 +23,11 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16, conf_thresho
 
     with torch.no_grad():
         for i, (img_tensor, meta) in enumerate(tqdm(val_loader, desc='Evaluating')):
-            bbox = meta['bbox'].squeeze(0).tolist()
+            bbox = meta['bbox']
+            if isinstance(bbox, torch.Tensor):
+                bbox = bbox.view(-1).tolist()
+            elif isinstance(bbox, np.ndarray):
+                bbox = bbox.flatten().tolist()
             img_id = int(meta['image_id'])
 
             img_tensor = img_tensor.to(device)
