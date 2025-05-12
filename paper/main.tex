@@ -122,7 +122,7 @@ Shanxin Yuan\\[4em]
 \textbf{Student Name:}\\
 Ruihan Zhao\\[4em]
 \vfill
-Date: 2024/Nov/28
+Date: 2025/May/12
 }}
 \end{minipage}
 \end{titlepage}
@@ -132,7 +132,8 @@ Date: 2024/Nov/28
 
 \clearpage
 \removeheaderandfooter
-\input{abstract}
+\section*{Abstract}
+\input{paper/Chapter/abstract}
 
 \clearpage
 \pagestyle{plain}
@@ -140,54 +141,100 @@ Date: 2024/Nov/28
 
 \clearpage
 \pagestyle{main}
+% ———————————— 第一章：Introduction ————————————
+\chapter{Introduction}
+\section{Background}
+\input{paper/Chapter/Intro/Background}
 
-\input{introduction}
+\section{Problem Statement}
+\input{paper/Chapter/Intro/Problem_Statement}
 
+\section{Thesis Structure}
+\input{paper/Chapter/Intro/Thesis_Structure}
+
+% ———————————— 第二章：Literature Review ————————————
+\chapter{Literature Review}
+\section{Human Pose Estimation}
+% <经典方法与深度学习进展>
+
+\section{Lightweight Network Architectures}
+% <MobileNet, CSPNet, EfficientNet 等>
+
+\section{Model Compression Techniques}
+% <Pruning, Quantization, Knowledge Distillation 等>
+
+\section{SimCC Method}
+% <SimCC 原理与在姿态估计中的应用>
+
+% ———————————— 第三章：Methodology ————————————
+\chapter{Methodology}
+\section{Network Architecture}
+% <CSP backbone + SE modules 设计>
+
+\section{SimCC Regression Head}
+% <SimCC 如何集成、参数设置说明>
+
+\section{Data Processing and Augmentation}
+% <COCO 单人裁剪、增强方式等>
+
+\section{Training Setup}
+% <优化器、损失函数、超参、工具链 (PyTorch, W\&B)>
+
+% ———————————— 第四章：Experimental Setup ————————————
+\chapter{Experimental Setup}
+\section{Dataset}
+% <COCO 2017 及单人裁剪策略说明>
+
+\section{Evaluation Metrics}
+% <mAP, AP50, PCK 等指标定义>
+
+\section{Tools and Environment}
+% <硬件/软件环境、日志工具>
+
+% ———————————— 第五章：Results and Failure Analysis ————————————
+\chapter{Results and Failure Analysis}
+\section{Quantitative Results}
+% <训练/验证指标表格与曲线>
+
+\section{Qualitative Visualizations}
+% <关键点预测示例图 (红/绿骨架对比) >
+
+\section{Failure Discussion}
+% <分析主要失败原因：数据、预训练缺失、超参、SimCC 参数敏感等>
+
+% ———————————— 第六章：Discussion ————————————
+\chapter{Discussion}
+\section{Comparison with Prior Work}
+% <与文献中轻量或大型模型对比，差距原因>
+
+\section{Lessons Learned}
+% <从失败中得到的方法论与实践教训>
+
+% ———————————— 第七章：Conclusion and Future Work ————————————
+\chapter{Conclusion and Future Work}
+\section{Summary}
+% <项目总结与主要收获>
+
+\section{Key Takeaways}
+% <核心结论点>
+
+\section{Future Directions}
+% <下一步改进方案：预训练、更多数据、蒸馏、分阶段训练等>
+
+% ———————————— 参考文献 ————————————
 \clearpage
-\input{Literature_Review}
+\bibliographystyle{apalike}  % 或 qmul 推荐样式
+\bibliography{references}    % 将引用条目写入 references.bib
 
-\clearpage
-\section{Additional Sections}
-Write as many sections (and subsections) as you need to cover both the theoretical and practical aspects of your project.
+% ———————————— 附录 ————————————
+\appendix
+\chapter{Code Structure}
+% <项目目录与关键脚本说明>
 
-\clearpage
-\section{Presentation}
+\chapter{W\&B Training Logs}
+% <可附训练曲线截图或日志摘要>
 
-\subsection{Source Code}
-Use the Code style for presenting code snippets within this report.
-
-\begin{lstlisting}
-static public void main(String[] args) {
-  try  {
-    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-  }
-  catch(Exception e) {
-    e.printStackTrace();
-  }
-  new WelcomeApp();
-}
-\end{lstlisting}
-
-\clearpage
-\section{Evaluation}
-
-\clearpage
-\section{Conclusion}
-Write your final conclusion of your project as well as any information related to future work here.
-
-\clearpage
-\section*{References}
-\addcontentsline{toc}{section}{References}
-
-\bibliographystyle{agsm}
-\bibliography{references}
-
-\clearpage
-\section*{Appendix A - Example}
-\addcontentsline{toc}{section}{Appendix A - Example}
-
-\clearpage
-\section*{Additional Appendices (as needed)}
-\addcontentsline{toc}{section}{Additional Appendices (as needed)}
+\chapter{Configuration Files}
+% <超参数与配置详情>
 
 \end{document}
