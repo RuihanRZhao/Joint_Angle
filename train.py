@@ -35,6 +35,8 @@ if __name__ == "__main__":
     config = get_config()
     wandb.init(project="JointPose_SimCC", config=config)
 
+
+
     input_size = (config['input_w'], config['input_h'])
     os.makedirs(config['checkpoint_root'], exist_ok=True)
 
@@ -58,6 +60,15 @@ if __name__ == "__main__":
     scheduler = OneCycleLR(optimizer, max_lr=config['learning_rate'], epochs=config['epochs'],
                            steps_per_epoch=len(train_loader), pct_start=config['warmup_pct'],
                            div_factor=config['div_factor'], final_div_factor=10000.0)
+
+    print(f"============ CONFIG ============")
+    for key, data in config.items():
+        print(f"  {key:15} = {data}")
+
+    print(f"  {'train_sample':15} = {len(train_dataset)}")
+    print(f"  {'eval_sample':15} = {len(val_dataset)}")
+    print(f"  {'device':15} = {device}")
+    print(f"================================")
 
     start_epoch = 0
     best_ap = float('-inf')
