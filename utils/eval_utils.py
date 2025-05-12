@@ -14,6 +14,7 @@ def evaluate(model, val_loader, device, input_size, bins, coco_gt, n_viz=16):
     results = []
     viz_images = []
 
+    input_w, input_h = input_size
     all_indices = list(range(len(val_loader)))
     viz_indices = set(random.sample(all_indices, min(n_viz, len(all_indices))))
 
@@ -22,24 +23,33 @@ def evaluate(model, val_loader, device, input_size, bins, coco_gt, n_viz=16):
             img_tensor = img_tensor.to(device)
             image_id = meta['image_id'].item()
             bbox = meta['bbox'].squeeze(0).tolist()
-            area = bbox[2] * bbox[3]
-
             pred_x, pred_y, _ = model(img_tensor)
-            coords = decode_simcc(pred_x, pred_y, input_size=input_size, bins=bins)  # [1, K, 2]
-            keypoints = coords[0].cpu().numpy()
 
+            keypoints = decode_simcc(pred_x, pred_y, input_size, bins)  # [B, K, 2]
+            kps = keypoints[0].cpu().numpy()  # [K,2]
+
+            # Reverse affine mapping to original image coordinates
+            x0, y0, w, h = bbox
+            sx = input_w / w
+            sy = input_h / h
+            kps[:, 0] = kps[:, 0] / sx + x0
+            kps[:, 1] = kps[:, 1] / sy + y0
+
+            # Build COCO result entry
             keypoints_flat = []
-            for (x, y) in keypoints:
-                keypoints_flat.extend([float(x), float(y), 2.0])
-
-            results.append({
-                'image_id': int(image_id),
+            for (xx, yy) in kps:
+                keypoints_flat.extend([float(xx), float(yy), 2.0])
+            area = w * h
+            img_id = int(meta['image_id'])
+            result = {
+                'image_id': img_id,
                 'category_id': 1,
                 'keypoints': keypoints_flat,
                 'score': 1.0,
-                'area': float(area),
-                'bbox': bbox
-            })
+                'bbox': [x0, y0, w, h],
+                'area': area
+            }
+            results.append(result)
 
             if i in viz_indices:
                 file_name = val_loader.dataset.coco.loadImgs(image_id)[0]['file_name']
