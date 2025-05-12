@@ -51,13 +51,13 @@ class JointPoseNet(nn.Module):
 
         # SimCC output heads
         self.keypoint_x_head = nn.Sequential(
-            nn.Conv2d(160, 64, kernel_size=1),
+            nn.Conv2d(64, 64, kernel_size=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, num_joints * self.x_classes, kernel_size=1),
             nn.AdaptiveAvgPool2d((1, 1))
         )
         self.keypoint_y_head = nn.Sequential(
-            nn.Conv2d(160, 64, kernel_size=1),
+            nn.Conv2d(64, 64, kernel_size=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, num_joints * self.x_classes, kernel_size=1),
             nn.AdaptiveAvgPool2d((1, 1))
