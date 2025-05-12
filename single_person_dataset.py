@@ -141,6 +141,13 @@ def process_image(image_info, annotations, input_dir, output_dir, margin_ratio):
     image.close()
     return new_images, new_annotations
 
+def count_visible_keypoints(ann):
+    """
+    统计关键点中 v > 0 的数量（非 'not labeled'）
+    """
+    kps = ann.get("keypoints", [])
+    return sum(1 for i in range(2, len(kps), 3) if kps[i] > 0)
+
 def process_dataset(split_name, input_ann_path, input_img_dir, output_img_dir, output_ann_path, margin_ratio=0.1, num_workers=8):
     """
     Process a COCO dataset split (e.g., train or val), generating a single-person dataset subset.
@@ -149,14 +156,23 @@ def process_dataset(split_name, input_ann_path, input_img_dir, output_img_dir, o
     images_info = {img['id']: img for img in data['images']}
     annotations = data['annotations']
     categories = data.get('categories', [])
+
     # Filter person annotations that have at least one keypoint and are not crowd
-    person_annotations = [ann for ann in annotations if ann.get('category_id') == 1 and ann.get('num_keypoints', 0) > 0 and ann.get('iscrowd', 0) == 0]
+    MIN_KEYPOINTS = 10
+    person_annotations = [
+        ann for ann in annotations
+        if ann.get('category_id') == 1
+           and ann.get('iscrowd', 0) == 0
+           and count_visible_keypoints(ann) >= MIN_KEYPOINTS
+           and ann.get('image_id') in images_info  # 确保图像存在
+    ]
+
+
     # Group annotations by image_id for processing
     ann_by_image = {}
     for ann in person_annotations:
         img_id = ann['image_id']
-        if img_id in images_info:  # ensure image exists
-            ann_by_image.setdefault(img_id, []).append(ann)
+        ann_by_image.setdefault(img_id, []).append(ann)
     # Prepare output containers
     all_new_images = []
     all_new_annotations = []
