@@ -38,11 +38,6 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16, conf_thresho
             kps = coords[0].cpu().numpy()  # [K, 2]
             scores = conf[0].cpu().numpy()  # [K]
 
-            print("==> coords:", coords.shape)
-            print("==> sample keypoint:", coords[0, 0])
-            print("==> bbox:", bbox)
-            print("==> keypoints_flat:", keypoints_flat[:6])
-
             # 反映射坐标（归一化 bbox → 原图）
             x0, y0, w, h = bbox
             sx = input_w / w
@@ -64,6 +59,12 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16, conf_thresho
                 'bbox': [x0, y0, w, h],
                 'area': w * h
             }
+
+            print("==> coords:", coords.shape)
+            print("==> sample keypoint:", coords[0, 0])
+            print("==> bbox:", bbox)
+            print("==> keypoints_flat:", keypoints_flat[:6])
+
             results.append(result)
 
             # 可视化
