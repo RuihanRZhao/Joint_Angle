@@ -47,7 +47,7 @@ class JointPoseNet(nn.Module):
         self.upsample2 = nn.Upsample(scale_factor=2)  # 1/8 -> 1/4
 
         # Feature fusion output
-        self.fuse_conv = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.fuse_conv = nn.Conv2d(160, 64, kernel_size=3, padding=1)
 
         # SimCC output heads
         self.keypoint_x_head = nn.Sequential(
