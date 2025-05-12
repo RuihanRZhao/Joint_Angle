@@ -20,7 +20,7 @@ def evaluate(model, val_loader, device, input_size, bins, n_viz=16):
     coco_gt = val_loader.dataset.coco
 
     with torch.no_grad():
-        for i, (img_tensor, meta) in enumerate(val_loader):
+        for i, (img_tensor, meta) in tqdm(enumerate(val_loader), total=len(val_loader)):
             img_tensor = img_tensor.to(device)
             image_id = meta['image_id'].item()
             bbox = meta['bbox'].squeeze(0).tolist()
