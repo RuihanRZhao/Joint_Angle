@@ -1,10 +1,13 @@
-import os
 import json
 import math
-from PIL import Image
+import os
 from concurrent.futures import ThreadPoolExecutor
+
+from PIL import Image
 from tqdm import tqdm
-from utils import get_config,ensure_coco_data
+
+from utils import get_config, ensure_coco_data
+
 
 def load_coco_annotations(json_path):
     """Load COCO annotations from a JSON file."""
@@ -198,8 +201,6 @@ def process_dataset(split_name, input_ann_path, input_img_dir, output_img_dir, o
 
 
 if __name__ == "__main__":
-    import argparse
-
     args = get_config()
     input_dir = os.path.join(args['run_root'], 'data')
     output_dir = args['data_root']

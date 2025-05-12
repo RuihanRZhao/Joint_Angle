@@ -3,65 +3,68 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SimCCLoss(nn.Module):
-    def __init__(self, x_weight=1.0, y_weight=1.0, smoothing=0.1):
+    def __init__(self, x_weight=1.0, y_weight=1.0, use_soft=True, reduction='mean'):
         """
-        SimCC 损失：使用 KLDivLoss 计算 soft logits 和 soft targets 的差异。
-        支持 label smoothing。
+        参数:
+            x_weight/y_weight: x轴和y轴的损失权重
+            use_soft: 是否启用soft label (默认True)
+            reduction: 'mean' or 'none'
         """
         super(SimCCLoss, self).__init__()
         self.x_weight = x_weight
         self.y_weight = y_weight
-        self.smoothing = smoothing
-        self.kl_loss = nn.KLDivLoss(reduction='none')  # 将 mask 应用于每个样本后再聚合
+        self.use_soft = use_soft
+        self.reduction = reduction
 
-    def smooth_one_hot(self, target: torch.Tensor, classes: int, smoothing=0.1):
-        """
-        将 one-hot 向量转为 smoothed label。
-        target: [N] long，表示类别索引。
-        return: [N, classes] float
-        """
-        with torch.no_grad():
-            target = target.view(-1)
-            smooth = torch.full((target.size(0), classes), smoothing / (classes - 1), device=target.device)
-            smooth.scatter_(1, target.unsqueeze(1), 1.0 - smoothing)
-        return smooth
+        if self.use_soft:
+            self.criterion_x = nn.KLDivLoss(reduction='none', log_target=False)
+            self.criterion_y = nn.KLDivLoss(reduction='none', log_target=False)
+        else:
+            self.criterion_x = nn.CrossEntropyLoss(reduction='none')
+            self.criterion_y = nn.CrossEntropyLoss(reduction='none')
 
     def forward(self, pred_x, pred_y, target_x, target_y, mask):
         """
-        pred_x/pred_y: [B, K, C]
-        target_x/target_y: [B, K] long，表示类别索引（如 SimCC bin）
-        mask: [B, K]
+        输入:
+            pred_x: [B, K, Cx] - raw logits
+            pred_y: [B, K, Cy]
+            target_x: [B, K, Cx] if soft else [B, K] indices
+            target_y: [B, K, Cy] if soft else [B, K]
+            mask: [B, K] - float mask (0 or 1)
+        输出:
+            loss dict: {'total_loss', 'x_loss', 'y_loss'}
         """
-        B, K, Cx = pred_x.shape
-        _, _, Cy = pred_y.shape
+        B, K, _ = pred_x.shape
+        mask = mask.view(-1)  # [B*K]
 
-        pred_x = pred_x.view(B * K, Cx)
-        pred_y = pred_y.view(B * K, Cy)
-        target_x = target_x.view(-1)  # [B*K]
-        target_y = target_y.view(-1)
-        mask = mask.view(-1)
+        # Reshape: [BK, C]
+        pred_x = pred_x.view(B * K, -1)
+        pred_y = pred_y.view(B * K, -1)
 
-        # 归一化 logits：log_softmax 作为 KLDivLoss 的输入
-        log_prob_x = F.log_softmax(pred_x, dim=1)
-        log_prob_y = F.log_softmax(pred_y, dim=1)
+        if self.use_soft:
+            # KLDiv expects log-probs
+            log_pred_x = F.log_softmax(pred_x, dim=1)
+            log_pred_y = F.log_softmax(pred_y, dim=1)
+            target_x = target_x.view(B * K, -1)
+            target_y = target_y.view(B * K, -1)
 
-        # 生成 smoothed label
-        soft_target_x = self.smooth_one_hot(target_x, Cx, self.smoothing)
-        soft_target_y = self.smooth_one_hot(target_y, Cy, self.smoothing)
+            loss_x = self.criterion_x(log_pred_x, target_x).sum(dim=1)  # [BK]
+            loss_y = self.criterion_y(log_pred_y, target_y).sum(dim=1)
+        else:
+            # CrossEntropy expects class index
+            target_x = target_x.view(B * K)
+            target_y = target_y.view(B * K)
+            loss_x = self.criterion_x(pred_x, target_x)  # [BK]
+            loss_y = self.criterion_y(pred_y, target_y)
 
-        # KL divergence：逐样本计算 loss
-        loss_x = self.kl_loss(log_prob_x, soft_target_x).sum(dim=1)  # [B*K]
-        loss_y = self.kl_loss(log_prob_y, soft_target_y).sum(dim=1)  # [B*K]
-
-        # 只统计标注可用的 keypoint
         loss_x = loss_x * mask
         loss_y = loss_y * mask
 
         valid = mask.sum().clamp(min=1.0)
         mean_x = loss_x.sum() / valid
         mean_y = loss_y.sum() / valid
-
         total = self.x_weight * mean_x + self.y_weight * mean_y
+
         return {
             'total_loss': total,
             'x_loss': mean_x,

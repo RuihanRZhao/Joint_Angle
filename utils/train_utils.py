@@ -1,43 +1,44 @@
-from tqdm import tqdm
 import torch
-from torch.cuda.amp import autocast, GradScaler
 import torch.nn.utils as nn_utils
+from torch.cuda.amp import autocast
+from tqdm import tqdm
 
-def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, scaler, ema_model=None, clip_grad=1.0):
+from tqdm import tqdm
+
+def train_one_epoch(model, train_loader, criterion, optimizer, scheduler, device, epoch):
     model.train()
     total_loss = 0.0
     total_x_loss = 0.0
     total_y_loss = 0.0
     count = 0
 
-    for batch in tqdm(train_loader, desc=f'Training Epoch {epoch}', unit='batch'):
+    use_soft_label = getattr(criterion, 'use_soft', False)
+
+    for batch in tqdm(train_loader, desc='Training', total=len(train_loader), unit='batch'):
         images, target_x, target_y, mask = batch
         images = images.to(device)
         target_x = target_x.to(device)
         target_y = target_y.to(device)
         mask = mask.to(device)
 
-        target_index_x = target_x.argmax(dim=2)
-        target_index_y = target_y.argmax(dim=2)
+        # SimCC logits
+        pred_x, pred_y = model(images)
 
-        optimizer.zero_grad()
-        with autocast():
-            pred_x, pred_y = model(images)
+        if not use_soft_label:
+            # 若为 one-hot，需 argmax 提取 index
+            target_index_x = target_x.argmax(dim=2)
+            target_index_y = target_y.argmax(dim=2)
             loss_dict = criterion(pred_x, pred_y, target_index_x, target_index_y, mask)
-            loss = loss_dict['total_loss']
+        else:
+            # 直接传 soft label tensor
+            loss_dict = criterion(pred_x, pred_y, target_x, target_y, mask)
 
-        scaler.scale(loss).backward()
-
-        # 梯度裁剪
-        scaler.unscale_(optimizer)
-        nn_utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad)
-
-        scaler.step(optimizer)
-        scaler.update()
-
-        # EMA 更新
-        if ema_model is not None:
-            update_ema(model, ema_model)
+        loss = loss_dict['total_loss']
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        if scheduler:
+            scheduler.step()
 
         total_loss += loss.item() * images.size(0)
         total_x_loss += loss_dict['x_loss'].item() * images.size(0)
@@ -56,9 +57,3 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, sc
         'y_loss': avg_y,
         'lr': lr
     }
-
-
-def update_ema(model, ema_model, decay=0.999):
-    with torch.no_grad():
-        for param, ema_param in zip(model.parameters(), ema_model.parameters()):
-            ema_param.data.mul_(decay).add_(param.data, alpha=1 - decay)

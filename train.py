@@ -75,7 +75,7 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = JointPoseNet(num_keypoints=17, bins=config['bins'], image_size=config['input_size']).to(device)
     ema_model = clone_ema_model(model)  # EMA 初始化
-    criterion = SimCCLoss()
+    criterion = SimCCLoss(use_soft=True)
     optimizer = AdamW(model.parameters(), lr=config['learning_rate'], weight_decay=1e-4)
     scaler = GradScaler()
 
