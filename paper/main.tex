@@ -6,7 +6,14 @@
 \usepackage{titlesec}
 \usepackage{listings}
 \usepackage{tocloft}
+\usepackage{amsmath}
 \usepackage{natbib} % For Harvard-style citations
+
+\makeatletter
+  \let\c@lofdepth\relax
+  \let\c@lotdepth\relax
+\makeatother
+\usepackage{subcaption}
 
 % Font settings
 \usepackage{helvet}
@@ -16,9 +23,10 @@
 \usepackage{hyperref}
 \hypersetup{
     colorlinks=true,
-    linkcolor=black,
-    filecolor=black,      
-    urlcolor=black,
+    linkcolor    = black,
+    citecolor    = black,
+    urlcolor     = black,
+    filecolor    = black
     pdftitle={Your Project Title},
     pdfpagemode=FullScreen,
 }
@@ -27,7 +35,7 @@
 \fancypagestyle{main}{%
   \fancyhf{}
   \fancyhead[L]{\fontsize{9}{11}\selectfont\textbf{Project Title}}
-  \fancyhead[R]{\fontsize{9}{11}\selectfont\textbf{Student Name}}
+  \fancyhead[R]{\fontsize{9}{11}\selectfont\textbf{Ruihan Zhao}}
   \fancyfoot[C]{\fontsize{9}{11}\selectfont\thepage}
   \renewcommand{\headrulewidth}{0.4pt}
 }
@@ -139,86 +147,88 @@ Date: 2025/May/12
 \pagestyle{plain}
 \tableofcontents
 
-\clearpage
 \pagestyle{main}
 % ———————————— 第一章：Introduction ————————————
-\chapter{Introduction}
-\section{Background}
-\input{paper/Chapter/Intro/Background}
+\section{Introduction}
+\subsection{Background}
+\input{paper/Chapter/Introduction/Background}
 
-\section{Problem Statement}
-\input{paper/Chapter/Intro/Problem_Statement}
+\subsection{Problem Statement}
+\input{paper/Chapter/Introduction/Problem_Statement}
 
-\section{Thesis Structure}
-\input{paper/Chapter/Intro/Thesis_Structure}
+\subsection{Thesis Structure}
+\input{paper/Chapter/Introduction/Thesis_Structure}
 
 % ———————————— 第二章：Literature Review ————————————
-\chapter{Literature Review}
-\section{Human Pose Estimation}
-% <经典方法与深度学习进展>
+\section{Literature Review}
+\subsection{Human Pose Estimation}
+\input{paper/Chapter/Literature_Review/Human_Pose_Estimation}
 
-\section{Lightweight Network Architectures}
-% <MobileNet, CSPNet, EfficientNet 等>
+\subsection{Lightweight Network Architectures}
+\input{paper/Chapter/Literature_Review/Lightweight_Network_Architectures}
 
-\section{Model Compression Techniques}
-% <Pruning, Quantization, Knowledge Distillation 等>
+\subsection{Model Compression Techniques}
+\input{paper/Chapter/Literature_Review/Model_Compression_Techniques}
 
-\section{SimCC Method}
-% <SimCC 原理与在姿态估计中的应用>
+\subsection{SimCC Method}
+\input{paper/Chapter/Literature_Review/SimCC_Method}
 
 % ———————————— 第三章：Methodology ————————————
-\chapter{Methodology}
-\section{Network Architecture}
-% <CSP backbone + SE modules 设计>
+\section{Methodology}
+This chapter presents the detailed methodology employed in the proposed lightweight human pose estimation approach. We build upon recent advances in efficient network design and coordinate regression techniques \cite{Dubey2023PoseSurvey}.
 
-\section{SimCC Regression Head}
-% <SimCC 如何集成、参数设置说明>
 
-\section{Data Processing and Augmentation}
-% <COCO 单人裁剪、增强方式等>
+\subsection{Network Architecture}
+\input{paper/Chapter/Methodology/Network_Architecture}
 
-\section{Training Setup}
-% <优化器、损失函数、超参、工具链 (PyTorch, W\&B)>
+\subsection{SimCC Regression Head}
+\input{paper/Chapter/Methodology/SimCC_Regression_Head}
+
+\subsection{Data Processing and Augmentation}
+\input{paper/Chapter/Methodology/Data_Processing_and_Augmentation}
+
+\subsection{Training Setup}
+\input{paper/Chapter/Methodology/Training_Setup}
 
 % ———————————— 第四章：Experimental Setup ————————————
-\chapter{Experimental Setup}
-\section{Dataset}
-% <COCO 2017 及单人裁剪策略说明>
+\section{Experimental Setup}
+\subsection{Dataset}
+\input{paper/Chapter/Experimental_setup/Dataset}
 
-\section{Evaluation Metrics}
-% <mAP, AP50, PCK 等指标定义>
+\subsection{Evaluation Metrics}
+\input{paper/Chapter/Experimental_setup/Evaluation_Metrics}
 
-\section{Tools and Environment}
-% <硬件/软件环境、日志工具>
+\subsection{Tools and Environment}
+\input{paper/Chapter/Experimental_setup/Tools_and_Environment}
 
 % ———————————— 第五章：Results and Failure Analysis ————————————
-\chapter{Results and Failure Analysis}
-\section{Quantitative Results}
-% <训练/验证指标表格与曲线>
+\section{Results and Failure Analysis}
+\subsection{Quantitative Results}
+\input{paper/Chapter/Result_and_Failure_Analysis/Quantitative_Results}
 
-\section{Qualitative Visualizations}
-% <关键点预测示例图 (红/绿骨架对比) >
+\subsection{Qualitative Visualizations}
+\input{paper/Chapter/Result_and_Failure_Analysis/Qualitative_Visualization}
 
-\section{Failure Discussion}
-% <分析主要失败原因：数据、预训练缺失、超参、SimCC 参数敏感等>
+\subsection{Failure Discussion}
+\input{paper/Chapter/Result_and_Failure_Analysis/Failure_Discussion}
 
 % ———————————— 第六章：Discussion ————————————
-\chapter{Discussion}
-\section{Comparison with Prior Work}
+\section{Discussion}
+\subsection{Comparison with Prior Work}
 % <与文献中轻量或大型模型对比，差距原因>
 
-\section{Lessons Learned}
+\subsection{Lessons Learned}
 % <从失败中得到的方法论与实践教训>
 
 % ———————————— 第七章：Conclusion and Future Work ————————————
-\chapter{Conclusion and Future Work}
-\section{Summary}
+\section{Conclusion and Future Work}
+\subsection{Summary}
 % <项目总结与主要收获>
 
-\section{Key Takeaways}
+\subsection{Key Takeaways}
 % <核心结论点>
 
-\section{Future Directions}
+\subsection{Future Directions}
 % <下一步改进方案：预训练、更多数据、蒸馏、分阶段训练等>
 
 % ———————————— 参考文献 ————————————
@@ -228,13 +238,13 @@ Date: 2025/May/12
 
 % ———————————— 附录 ————————————
 \appendix
-\chapter{Code Structure}
+\section{Code Structure}
 % <项目目录与关键脚本说明>
 
-\chapter{W\&B Training Logs}
+\section{W\&B Training Logs}
 % <可附训练曲线截图或日志摘要>
 
-\chapter{Configuration Files}
+\section{Configuration Files}
 % <超参数与配置详情>
 
 \end{document}

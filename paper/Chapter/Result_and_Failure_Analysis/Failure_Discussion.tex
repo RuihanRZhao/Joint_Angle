@@ -1,0 +1,9 @@
+The models’ near-zero validation metrics can be attributed to four main factors:
+\begin{enumerate}
+  \item \textbf{Insufficient data.} Only 134\,214 cropped person images were available, compared to hundreds of thousands typically used in pose estimation. The models memorized the training set (overfitting) but could not generalize.
+  \item \textbf{No pretraining.} Backbones were trained from scratch without ImageNet initialization, depriving the models of robust low-level visual features crucial for generalization \cite{Mathis2021Pretraining}.
+  \item \textbf{SimCC hyperparameters.} SimCC requires careful tuning of the number of spatial bins and the Gaussian label width \cite{Li2022SimCC}. Our default settings impeded effective learning, as evidenced by the high training loss plateau.
+  \item \textbf{Limited model capacity.} The lightweight CSP backbone, though efficient, lacked representational power; even well-trained small models rely on pretraining and extensive data \cite{Toshev2014DeepPose}.
+\end{enumerate}
+
+To improve future results, one should adopt transfer learning for the backbone, expand and augment the dataset, refine SimCC parameters (or revert to heatmaps), and consider moderately increasing model capacity.

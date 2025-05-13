@@ -1,0 +1,32 @@
+The core feature extractor is based on the Cross Stage Partial (CSP) network backbone, which partitions feature maps into two paths and merges them to reduce computation redundancy \cite{Wang2020CSPNet}. Each CSP block comprises:
+\begin{itemize}
+  \item A residual path with $n$ basic units, each containing two $3\times3$ convolutions with Batch Normalization and SiLU activation;
+  \item A shortcut path that bypasses the residual units;
+  \item A final $1\times1$ convolution to fuse the concatenated outputs.
+\end{itemize}
+To enhance channel-wise feature representation, we insert Squeeze-and-Excitation (SE) modules after each CSP block, following the design in \cite{Hu2018SENet}. The SE block applies global average pooling, a two-layer fully connected bottleneck, and sigmoid gating to reweight feature channels.
+
+The backbone consists of:
+\begin{enumerate}
+  \item \textbf{Stem}: $3\times3$ conv, stride 2, 64 channels.
+  \item \textbf{Stage 1}: Downsample to $\frac{1}{4}$ resolution ($64\!\to\!128$ channels), CSP block with $n=2$, SE module.
+  \item \textbf{Stage 2}: Downsample to $\frac{1}{8}$ resolution ($128\!\to\!256$ channels), CSP block with $n=4$, SE module.
+  \item \textbf{Stage 3}: Downsample to $\frac{1}{16}$ resolution ($256\!\to\!512$ channels), CSP block with $n=4$, SE module.
+\end{enumerate}
+Multi-scale feature fusion is performed via top-down upsampling and addition, refining the final $128$-channel feature map at $\frac{1}{4}$ input resolution.
+The core feature extractor is based on the Cross Stage Partial (CSP) network backbone, which partitions feature maps into two paths and merges them to reduce computation redundancy \cite{Wang2020CSPNet}. Each CSP block comprises:
+\begin{itemize}
+  \item A residual path with $n$ basic units, each containing two $3\times3$ convolutions with Batch Normalization and SiLU activation;
+  \item A shortcut path that bypasses the residual units;
+  \item A final $1\times1$ convolution to fuse the concatenated outputs.
+\end{itemize}
+To enhance channel-wise feature representation, we insert Squeeze-and-Excitation (SE) modules after each CSP block, following the design in \cite{Hu2018SENet}. The SE block applies global average pooling, a two-layer fully connected bottleneck, and sigmoid gating to reweight feature channels.
+
+The backbone consists of:
+\begin{enumerate}
+  \item \textbf{Stem}: $3\times3$ conv, stride 2, 64 channels.
+  \item \textbf{Stage 1}: Downsample to $\frac{1}{4}$ resolution ($64\!\to\!128$ channels), CSP block with $n=2$, SE module.
+  \item \textbf{Stage 2}: Downsample to $\frac{1}{8}$ resolution ($128\!\to\!256$ channels), CSP block with $n=4$, SE module.
+  \item \textbf{Stage 3}: Downsample to $\frac{1}{16}$ resolution ($256\!\to\!512$ channels), CSP block with $n=4$, SE module.
+\end{enumerate}
+Multi-scale feature fusion is performed via top-down upsampling and addition, refining the final $128$-channel feature map at $\frac{1}{4}$ input resolution.

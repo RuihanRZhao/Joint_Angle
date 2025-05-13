@@ -1,0 +1,55 @@
+Training and validation performance were tracked over all epochs for the two longest runs: the baseline heatmap-based model (706 epochs) and the SimCC-based model (181 epochs). Figure~\ref{fig:quantitative} shows (a) the training loss curves (logarithmic scale) and (b) the validation keypoint AP metrics (mAP and AP$_{50}$) across epochs. The baseline model’s training loss rapidly decreases to near zero, yet its validation mAP remains near 0\% (max $\sim$0.06\%) and AP$_{50}$ stays below 0.3\%. The SimCC model converges to a higher training loss but exhibits a brief peak in validation mAP ($\sim$0.17\% at epoch 70) before falling back toward $\sim$0.085\%. These plots confirm severe overfitting and virtually no generalization, far below typical COCO benchmarks \cite{Lin2014COCO}.
+
+\begin{figure}[htp]
+  \centering
+  \captionsetup[sub]{justification=centering}  % 子图标题居中
+
+  %—— 第一行：Baseline 模型指标 ——
+  \begin{minipage}[b]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/loss_Base.png}
+    \subcaption{Baseline train loss}
+    \label{fig:loss_base}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[b]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/mAP_Base.png}
+    \subcaption{Baseline val mAP}
+    \label{fig:map_base}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[b]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/AP50_Base.png}
+    \subcaption{Baseline val AP$_{50}$}
+    \label{fig:ap50_base}
+  \end{minipage}
+
+  \vspace{1ex}  % 两行之间留一点空隙
+
+  %—— 第二行：SimCC 模型指标 ——
+  \begin{minipage}[b]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/loss_SimCC.png}
+    \subcaption{SimCC train loss}
+    \label{fig:loss_simcc}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[b]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/mAP_SimCC.png}
+    \subcaption{SimCC val mAP}
+    \label{fig:map_simcc}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[b]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/AP50_SimCC.png}
+    \subcaption{SimCC val AP$_{50}$}
+    \label{fig:ap50_simcc}
+  \end{minipage}
+
+  \caption{Comparison of training and validation metrics for the baseline and SimCC models. Top row: baseline; bottom row: SimCC. Left to right: train loss, val mAP, val AP$_{50}$.}
+  \label{fig:all_metrics_grid}
+\end{figure}

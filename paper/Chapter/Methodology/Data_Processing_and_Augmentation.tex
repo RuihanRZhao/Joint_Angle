@@ -1,0 +1,6 @@
+We convert MS COCO 2017 into a single-person dataset by cropping each annotated bounding box with 15\% padding and resizing to $384\times384$ \cite{Dubey2023PoseSurvey}. Keypoint coordinates are transformed accordingly. Input images are normalized with ImageNet statistics:
+\[
+  \mu = [0.485, 0.456, 0.406],\quad
+  \sigma = [0.229, 0.224, 0.225].
+\]
+No additional geometric or color augmentations were applied in this baseline pipeline.

@@ -1,0 +1,6 @@
+Keypoint localization is implemented using the SimCC (Simple Coordinate Classification) head \cite{Li2022SimCC}. From the fused feature map of size $\frac{H}{4}\times\frac{W}{4}\times C$ (e.g.\ $96\times96\times128$ for $384\times384$ input), two parallel convolutions predict per-keypoint logits:
+\begin{itemize}
+  \item \texttt{conv\_x}: kernel $(H/4,1)$, produces a $K\times W/4$ logit map.
+  \item \texttt{conv\_y}: kernel $(1,W/4)$, produces a $K\times H/4$ logit map.
+\end{itemize}
+Each 1D logit is then upsampled by a factor of 4 using transposed convolution (stride=4, kernel=4, depthwise) to yield full-resolution distributions ($K\times W$ and $K\times H$). Ground-truth keypoints are encoded as Gaussian soft-labels over each axis with $\sigma=1.5$ bins; the loss is the sum of KL-divergences for $x$ and $y$ distributions.
