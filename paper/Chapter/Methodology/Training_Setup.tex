@@ -1,1 +1,20 @@
-The model was trained for 200 epochs with batch size 512 using the AdamW optimizer (learning rate $5\times10^{-3}$, weight decay $1\times10^{-4}$) and a One-Cycle learning rate schedule (10\% warm-up, cosine annealing, restarts every 60 epochs). Automatic Mixed Precision (AMP) was enabled to accelerate training. Experiments were logged with Weights \& Biases, tracking training loss components and validation metrics (mAP, AP@50) each epoch.
+We employed two distinct training configurations to evaluate both the heatmap‐based baseline and our SimCC‐based model:
+
+\begin{itemize}
+  \item \textbf{Epochs}: 706 (selected to ensure full convergence on the heatmap objective).
+  \item \textbf{Batch size}: 256 (tuned to fit GPU memory while maintaining stable batch statistics).
+  \item \textbf{Optimizer}: AdamW with initial learning rate \(1\times10^{-3}\) and weight decay \(1\times10^{-4}\).
+  \item \textbf{Learning rate schedule}: One‐Cycle policy with 10\% linear warm‐up over the first 70 epochs, followed by cosine annealing down to \(\approx10^{-6}\), and a cycle restart every 200 epochs.
+  \item \textbf{Precision}: Automatic Mixed Precision (AMP) enabled to accelerate training without sacrificing numerical stability.
+  \item \textbf{Logging}: Weights \& Biases logging of per‐epoch training and validation losses, mAP, AP@50, and periodic visualizations of predicted heatmaps.
+\end{itemize}
+
+\paragraph{SimCC‐Based Model}
+\begin{itemize}
+  \item \textbf{Epochs}: 181 (determined by early convergence of the KL‐divergence losses).
+  \item \textbf{Batch size}: 512 (to improve the stability of the 1D classification distributions).
+  \item \textbf{Optimizer}: AdamW with a higher initial learning rate \(5\times10^{-3}\) and weight decay \(1\times10^{-4}\).
+  \item \textbf{Learning rate schedule}: One‐Cycle policy with 10\% warm‐up over the first 18 epochs, followed by cosine decay to \(5\times10^{-5}\), with a restart every 60 epochs.
+  \item \textbf{Precision}: AMP enabled for faster iterations and reduced memory consumption.
+  \item \textbf{Logging}: Weights \& Biases tracking of training loss components (\texttt{train/x\_loss}, \texttt{train/y\_loss}), KL‐divergence terms, and validation metrics (mAP, AP@50).
+\end{itemize}

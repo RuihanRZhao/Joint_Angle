@@ -1,9 +1,15 @@
-The models’ near-zero validation metrics can be attributed to four main factors:
+The models’ near-zero validation metrics can be attributed to four primary failure modes:
 \begin{enumerate}
-  \item \textbf{Insufficient data.} Only 134\,214 cropped person images were available, compared to hundreds of thousands typically used in pose estimation. The models memorized the training set (overfitting) but could not generalize.
-  \item \textbf{No pretraining.} Backbones were trained from scratch without ImageNet initialization, depriving the models of robust low-level visual features crucial for generalization \cite{Mathis2021Pretraining}.
-  \item \textbf{SimCC hyperparameters.} SimCC requires careful tuning of the number of spatial bins and the Gaussian label width \cite{Li2022SimCC}. Our default settings impeded effective learning, as evidenced by the high training loss plateau.
-  \item \textbf{Limited model capacity.} The lightweight CSP backbone, though efficient, lacked representational power; even well-trained small models rely on pretraining and extensive data \cite{Toshev2014DeepPose}.
+  \item \textbf{Insufficient data diversity and volume.} Although 134\,214 single-person crops were extracted, this dataset lacked sufficient variation in pose, scale, occlusion, and background complexity. Without a wide distribution of viewpoints and scenarios, the network memorized trivial appearance patterns and failed to generalize to unseen poses or lighting conditions.
+  \item \textbf{Absence of transfer learning.} Training the CSP backbone from random initialization ignored the benefits of pre‐learned low‐level filters and hierarchical representations offered by ImageNet pretraining \cite{Mathis2021Pretraining}. As a result, early convolution layers did not converge to robust edge and texture detectors, leading to unstable gradients and slow feature refinement.
+  \item \textbf{Suboptimal SimCC hyperparameters.} The SimCC head depends critically on the choice of bin count and Gaussian label width \cite{Li2022SimCC}. Our initial setting of 4 bins per pixel and $\sigma=1.5$ produced overly coarse distributions that hindered precise localization. Moreover, without a dedicated hyperparameter search or curriculum schedule, the classification targets remained noisy, impeding the KL‐divergence optimization.
+  \item \textbf{Restricted model representational capacity.} While the CSP blocks reduced FLOPs, the overall channel count and receptive field were too limited to capture long‐range dependencies or subtle joint relationships. Lightweight architectures often require multi‐stage refinement or higher dimensional embeddings to model complex articulations, which our one‐stage design lacked.
 \end{enumerate}
 
-To improve future results, one should adopt transfer learning for the backbone, expand and augment the dataset, refine SimCC parameters (or revert to heatmaps), and consider moderately increasing model capacity.
+\noindent\textbf{Future Remedies:} To address these shortcomings, we recommend:
+\begin{itemize}
+  \item \emph{Data enhancement:} Integrate additional pose datasets (e.g.\ MPII, CrowdPose), apply strong augmentations (rotation, scaling, synthetic occlusion), and implement on‐the‐fly mixup or adversarial examples to enrich diversity.
+  \item \emph{Transfer learning:} Initialize the backbone with ImageNet‐ or COCO‐pretrained weights, optionally fine‐tune intermediate layers before enabling the SimCC head to stabilize learning.
+  \item \emph{Hyperparameter optimization:} Conduct grid or Bayesian search over bin counts, smoothing widths, and learning rate warm‐up durations; consider progressive binning strategies that refine resolution over epochs.
+  \item \emph{Architectural scaling:} Experiment with intermediate resolution branches, lightweight attention modules, or dual‐stage decoders to balance efficiency and expressivity.
+\end{itemize}

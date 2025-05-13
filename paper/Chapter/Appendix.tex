@@ -1,0 +1,26 @@
+\subsection{Hyperparameter Configuration}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{l c}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+Training dataset             & COCO 2017 single-person subset \\
+Input image size             & $384\times384$ \\
+Backbone architecture        & CSPNet with SE blocks \\
+Optimizer                    & AdamW ($\beta_1=0.9,\ \beta_2=0.999$) \\
+Initial learning rate        & $5\times10^{-3}$ \\
+Learning rate schedule       & One-Cycle (warmup + cosine annealing) \\
+Batch size                   & 512 \\
+Training epochs              & 200 \\
+Weight decay                 & $1\times10^{-4}$ \\
+Loss function                & SimCC KL divergence loss \\
+SimCC bin count              & 4 (per pixel) \\
+SimCC label smoothing $\sigma$ & 1.5 bins \\
+Evaluation metrics           & COCO keypoint mAP, AP$_{50}$ \\
+\bottomrule
+\end{tabular}
+\caption{Key hyperparameters used in training the lightweight pose estimation model.}
+\label{tab:hyperparams}
+\end{table}

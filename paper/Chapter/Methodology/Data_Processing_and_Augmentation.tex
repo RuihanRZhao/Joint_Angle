@@ -1,6 +1,29 @@
-We convert MS COCO 2017 into a single-person dataset by cropping each annotated bounding box with 15\% padding and resizing to $384\times384$ \cite{Dubey2023PoseSurvey}. Keypoint coordinates are transformed accordingly. Input images are normalized with ImageNet statistics:
-\[
-  \mu = [0.485, 0.456, 0.406],\quad
-  \sigma = [0.229, 0.224, 0.225].
-\]
-No additional geometric or color augmentations were applied in this baseline pipeline.
+We convert the MS COCO 2017 keypoint dataset into a single-person collection via the following steps (see \texttt{coco.py} for full implementation):contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}:
+\begin{enumerate}
+  \item Load all “person” annotations using pycocotools and filter out any instance with fewer than 5 visible keypoints or marked as crowd.
+  \item For each remaining annotation, extract its bounding box $[x,y,w,h]$, compute the center $(x+\tfrac{w}{2},\,y+\tfrac{h}{2})$, then expand both width and height by 15\%:
+    \[
+      w' = w\times1.15,\quad h' = h\times1.15,
+    \]
+    and clip $x'$ and $y'$ so that the padded box lies within the original image.
+  \item Crop the image to this padded box and resize to $384\times384$ with bilinear interpolation.
+  \item Transform the RGB crop to a tensor and normalize using ImageNet statistics:
+    \[
+      \mu = [0.485,\,0.456,\,0.406],\quad
+      \sigma = [0.229,\,0.224,\,0.225].
+    \]
+  \item Adjust each keypoint $(k_x,k_y)$ by
+    \[
+      k_x' = \tfrac{(k_x - x')}{w'}\times384,\quad
+      k_y' = \tfrac{(k_y - y')}{h'}\times384,
+    \]
+    producing coordinates in the $384\times384$ frame.
+  \item Encode each visible keypoint into two 1D SimCC targets of length
+    \(\mathrm{out\_w}\times\mathrm{bins}\) and \(\mathrm{out\_h}\times\mathrm{bins}\), where
+    \(\mathrm{out\_w}=\mathrm{out\_h}=96\) (given \texttt{downsample}=4, \texttt{bins}=4).
+    If \texttt{use\_soft\_label=True}, these targets are Gaussian distributions with \(\sigma=1.5\) bins; otherwise they are one-hot.
+  \item Return the tuple
+    \(\bigl(\text{image\_tensor},\,\text{target\_x},\,\text{target\_y},\,\text{visibility\_mask}\bigr)\).
+\end{enumerate}
+
+No additional geometric (e.g.\ rotation, flipping) or photometric (e.g.\ color jitter) augmentations are applied in this baseline pipeline.

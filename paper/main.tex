@@ -14,6 +14,10 @@
   \let\c@lotdepth\relax
 \makeatother
 \usepackage{subcaption}
+\usepackage{booktabs} 
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
 
 % Font settings
 \usepackage{helvet}
@@ -34,7 +38,7 @@
 % Set up the fancy header
 \fancypagestyle{main}{%
   \fancyhf{}
-  \fancyhead[L]{\fontsize{9}{11}\selectfont\textbf{Project Title}}
+  \fancyhead[L]{\fontsize{9}{11}\selectfont\textbf{Failure-Driven Analysis and Roadmap for Lightweight Human Pose Estimation}}
   \fancyhead[R]{\fontsize{9}{11}\selectfont\textbf{Ruihan Zhao}}
   \fancyfoot[C]{\fontsize{9}{11}\selectfont\thepage}
   \renewcommand{\headrulewidth}{0.4pt}
@@ -123,7 +127,7 @@ Undergraduate Project 2024/25
 BSc. Computer Science\\[4em]
 }
 {\fontsize{20}{24}\selectfont \uline{\textbf{Project Title:}}\\
-\textbf{Enhancing Accuracy of Human Skeletal Angle Measurement Using Stereo Vision and Multi-Camera Systems}\\[4em]
+\textbf{Failure-Driven Analysis and Roadmap for Lightweight Human Pose Estimation}\\[4em]
 {\fontsize{14}{17}\selectfont
 \textbf{Supervisor:}\\
 Shanxin Yuan\\[4em]
@@ -148,6 +152,7 @@ Date: 2025/May/12
 \tableofcontents
 
 \pagestyle{main}
+\clearpage
 % ———————————— 第一章：Introduction ————————————
 \section{Introduction}
 \subsection{Background}
@@ -215,21 +220,21 @@ This chapter presents the detailed methodology employed in the proposed lightwei
 % ———————————— 第六章：Discussion ————————————
 \section{Discussion}
 \subsection{Comparison with Prior Work}
-% <与文献中轻量或大型模型对比，差距原因>
+\input{paper/Chapter/Discussion/Comparison_with_Prior_Work}
 
 \subsection{Lessons Learned}
-% <从失败中得到的方法论与实践教训>
+\input{paper/Chapter/Discussion/Lessons_Learned}
 
 % ———————————— 第七章：Conclusion and Future Work ————————————
 \section{Conclusion and Future Work}
 \subsection{Summary}
-% <项目总结与主要收获>
+\input{paper/Chapter/Conclusion_and_Future_work/Summary}
 
 \subsection{Key Takeaways}
-% <核心结论点>
+\input{paper/Chapter/Conclusion_and_Future_work/Key_Takeways}
 
 \subsection{Future Directions}
-% <下一步改进方案：预训练、更多数据、蒸馏、分阶段训练等>
+\input{paper/Chapter/Conclusion_and_Future_work/Future_Directions}
 
 % ———————————— 参考文献 ————————————
 \clearpage
@@ -238,13 +243,6 @@ This chapter presents the detailed methodology employed in the proposed lightwei
 
 % ———————————— 附录 ————————————
 \appendix
-\section{Code Structure}
-% <项目目录与关键脚本说明>
-
-\section{W\&B Training Logs}
-% <可附训练曲线截图或日志摘要>
-
-\section{Configuration Files}
-% <超参数与配置详情>
+\input{paper/Chapter/Appendix}
 
 \end{document}
